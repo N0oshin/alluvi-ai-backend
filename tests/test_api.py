@@ -397,3 +397,112 @@ async def test_delivery_failure_rolls_back_the_signup(
 
     async with session_factory() as db:
         assert await db.scalar(select(User).where(User.email == email)) is None
+
+
+# --------------------------------------------------------------------------
+# Username derivation and email changes
+# --------------------------------------------------------------------------
+
+
+async def test_same_local_part_on_different_domains_both_sign_up(client):
+    """alice@gmail.com and alice@outlook.com are different people. The
+    username is derived from the local part, so the second signup used to
+    die on uq_users_username with a 500."""
+    local = f"alice{uuid.uuid4().hex[:6]}"
+    first = await client.post(
+        "/api/Auth/SignUp",
+        json={"name": "A", "email": f"{local}@gmail.com", "password": "Passw0rd!"},
+    )
+    second = await client.post(
+        "/api/Auth/SignUp",
+        json={"name": "B", "email": f"{local}@outlook.com", "password": "Passw0rd!"},
+    )
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+
+
+async def test_username_freed_by_an_email_change_does_not_break_signup(
+    auth_client, client, session_factory
+):
+    """Changing an address leaves the old derived username on the row, so the
+    original address becomes re-registerable while its username is still
+    taken."""
+    from sqlalchemy import select
+
+    from app.db.models import User
+
+    details = await auth_client.get("/api/profile/personalDetails")
+    original = details.json()["email"]
+
+    moved = f"moved-{uuid.uuid4().hex[:8]}@example.com"
+    resp = await auth_client.put("/api/profile/personalDetails", json={"email": moved})
+    assert resp.status_code == 200, resp.text
+
+    # The original address is free again — signing up with it must not 500.
+    resp = await client.post(
+        "/api/Auth/SignUp",
+        json={"name": "New Owner", "email": original, "password": "Passw0rd!"},
+    )
+    assert resp.status_code == 201, resp.text
+
+    async with session_factory() as db:
+        names = (await db.scalars(select(User.username))).all()
+        assert len(names) == len(set(names))
+
+
+async def test_duplicate_signup_is_409_not_500(client):
+    email = f"dupe-{uuid.uuid4().hex[:8]}@example.com"
+    body = {"name": "A", "email": email, "password": "Passw0rd!"}
+    assert (await client.post("/api/Auth/SignUp", json=body)).status_code == 201
+    resp = await client.post("/api/Auth/SignUp", json=body)
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "EMAIL_TAKEN"
+
+
+async def test_changing_email_revokes_verified_status(auth_client, session_factory):
+    """Otherwise a verified user could point the account at an address they
+    don't own and still receive its password-reset links."""
+    from sqlalchemy import select
+
+    from app.db.models import User
+
+    moved = f"unproven-{uuid.uuid4().hex[:8]}@example.com"
+    resp = await auth_client.put("/api/profile/personalDetails", json={"email": moved})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["emailVerificationRequired"] is True
+
+    async with session_factory() as db:
+        user = await db.scalar(select(User).where(User.email == moved))
+        assert user is not None
+        assert user.email_verified is False
+
+
+async def test_changing_email_to_a_taken_address_is_409(auth_client, client):
+    taken = f"taken-{uuid.uuid4().hex[:8]}@example.com"
+    resp = await client.post(
+        "/api/Auth/SignUp",
+        json={"name": "Owner", "email": taken, "password": "Passw0rd!"},
+    )
+    assert resp.status_code == 201, resp.text
+
+    resp = await auth_client.put("/api/profile/personalDetails", json={"email": taken})
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "EMAIL_TAKEN"
+
+
+async def test_editing_other_fields_leaves_verification_alone(
+    auth_client, session_factory
+):
+    from sqlalchemy import select
+
+    from app.db.models import User
+
+    resp = await auth_client.put(
+        "/api/profile/personalDetails", json={"name": "Renamed", "heightCm": 175.0}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["emailVerificationRequired"] is False
+
+    async with session_factory() as db:
+        user = await db.scalar(select(User).where(User.name == "Renamed"))
+        assert user.email_verified is True

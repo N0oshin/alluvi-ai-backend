@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 from datetime import UTC, date, datetime, timedelta
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, status
 from sqlalchemy import func, select
 
 from app.core.deps import CurrentUser, Db, LangDep, not_found
+from app.core.errors import AppError
 from app.core.i18n import Lang
 from app.db.models import (
     Achievement,
@@ -17,10 +18,12 @@ from app.db.models import (
     LegalDocument,
     Meal,
     NotificationSettings,
+    User,
     UserAchievement,
     WeightEntry,
     WeightSource,
 )
+from app.api.v1.auth import _issue_otp
 from app.api.v1.userinfo import active_plan, recalculate_plan
 from app.schemas.common import MessageResponse
 from app.schemas.profile import (
@@ -165,8 +168,25 @@ async def update_personal_details(
 ) -> PersonalDetailsOut:
     if payload.name is not None:
         user.name = payload.name.strip()
+
+    verification_required = False
     if payload.email is not None:
-        user.email = payload.email.lower()
+        new_email = payload.email.strip().lower()
+        if new_email != user.email:
+            clash = await db.scalar(select(User).where(User.email == new_email))
+            if clash is not None:
+                raise AppError(
+                    "auth.email_taken",
+                    status_code=status.HTTP_409_CONFLICT,
+                    code="EMAIL_TAKEN",
+                )
+            user.email = new_email
+            # The new address is unproven. Keeping email_verified set would
+            # let anyone point their account at an address they don't own and
+            # still receive its verification codes and password-reset links.
+            user.email_verified = False
+            verification_required = True
+
     if payload.gender is not None:
         try:
             user.gender = Gender(payload.gender.lower())
@@ -181,12 +201,17 @@ async def update_personal_details(
     # Height, birthday, and gender all feed BMR — the plan must follow.
     await recalculate_plan(db, user)
 
+    if verification_required:
+        # Sends to the *new* address, so it only lands if the user owns it.
+        await _issue_otp(db, user)
+
     return PersonalDetailsOut(
         name=user.name or "",
         email=user.email,
         gender=(user.gender.value if user.gender else "other"),
         height_cm=user.height_cm or 170.0,
         birthday=user.birthday,
+        email_verification_required=verification_required,
     )
 
 

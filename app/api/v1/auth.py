@@ -11,11 +11,13 @@ Two distinct recovery mechanisms, per the design:
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, status
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.deps import CurrentUser, Db
@@ -163,6 +165,36 @@ async def _issue_otp(db: Db, user: User) -> str:
     return code
 
 
+_USERNAME_UNSAFE = re.compile(r"[^a-z0-9._-]")
+
+
+async def _unique_username(db: Db, email: str) -> str:
+    """Derive a free username from the email's local part.
+
+    Local parts are not unique across providers — alice@gmail.com and
+    alice@outlook.com both want "alice" — and an address change leaves the
+    old username behind, so the derived name is often already taken. Append
+    the first free numeric suffix rather than letting the insert die on
+    uq_users_username.
+    """
+    base = _USERNAME_UNSAFE.sub("", email.split("@")[0].lower())[:50] or "user"
+    taken = set(
+        (
+            await db.scalars(
+                select(User.username).where(
+                    User.username.startswith(base, autoescape=True)
+                )
+            )
+        ).all()
+    )
+    if base not in taken:
+        return base
+    suffix = 1
+    while f"{base}{suffix}" in taken:
+        suffix += 1
+    return f"{base}{suffix}"
+
+
 def _ensure_password_policy(password: str) -> None:
     """The rule shown on Create Account: 8+ chars, a number and a symbol."""
     if not password_is_valid(password):
@@ -201,11 +233,22 @@ async def sign_up(payload: SignUpRequest, db: Db) -> SignUpResponse:
         name=payload.name.strip(),
         password_hash=hash_password(payload.password),
         provider=AuthProvider.email,
-        username=email.split("@")[0][:60],
+        username=await _unique_username(db, email),
         invite_code=uuid.uuid4().hex[:8].upper(),
     )
     db.add(user)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        # Two signups racing on the same address (or the same derived
+        # username) both pass the checks above and one loses at the insert.
+        # That is a conflict, not a server fault.
+        logger.warning("Signup conflict for %s: %s", email, exc.orig)
+        raise AppError(
+            "auth.email_taken",
+            status_code=status.HTTP_409_CONFLICT,
+            code="EMAIL_TAKEN",
+        ) from exc
     await _bootstrap_user_rows(db, user)
     await _issue_otp(db, user)
 
@@ -395,7 +438,7 @@ async def _social_login(
             provider=provider,
             provider_subject=subject,
             email_verified=True,  # the provider already verified it
-            username=email.split("@")[0][:60],
+            username=await _unique_username(db, email.lower()),
             invite_code=uuid.uuid4().hex[:8].upper(),
         )
         db.add(user)

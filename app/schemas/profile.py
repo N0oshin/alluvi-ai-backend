@@ -98,6 +98,9 @@ class PersonalDetailsOut(CamelModel):
     gender: str
     height_cm: float
     birthday: date | None
+    # True when the address just changed: a code has been emailed to it, and
+    # the account stays locked out of login until `Auth/verifyCode` runs.
+    email_verification_required: bool = False
 
 
 class PersonalDetailsUpdate(CamelModel):

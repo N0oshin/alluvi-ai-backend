@@ -11,3 +11,6 @@ venv/
 .mypy_cache/
 .idea/
 .vscode/
+
+planCalc.txt
+run.txt
