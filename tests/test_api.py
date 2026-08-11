@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import re
+import uuid
 
 import pytest
 from PIL import Image
@@ -322,3 +324,76 @@ async def test_device_token_returns_literal_true(client):
     )
     assert resp.status_code == 200
     assert resp.json() is True
+
+
+# --------------------------------------------------------------------------
+# Email delivery
+# --------------------------------------------------------------------------
+
+
+async def test_signup_sends_a_verification_email(client, monkeypatch):
+    """Sign-up must actually hand a message to the sender, with the live code."""
+    from app.services.email import base as email_base
+    from app.api.v1 import auth as auth_module
+
+    sent: list[email_base.EmailMessage] = []
+
+    class _Capture(email_base.EmailSender):
+        name = "capture"
+
+        async def send(self, message):
+            sent.append(message)
+
+    monkeypatch.setattr(auth_module, "get_email_sender", lambda: _Capture())
+
+    email = f"user-{uuid.uuid4().hex[:8]}@example.com"
+    resp = await client.post(
+        "/api/Auth/SignUp",
+        json={"name": "Test User", "email": email, "password": "Passw0rd!"},
+    )
+    assert resp.status_code == 201, resp.text
+
+    assert len(sent) == 1
+    message = sent[0]
+    assert message.to == email
+    # The 6-digit code must appear in the plain-text part, not only the HTML —
+    # some clients never render HTML at all.
+    code = re.search(r"\b(\d{6})\b", message.text)
+    assert code is not None, message.text
+
+    # And it must be the code the database will actually accept.
+    verify = await client.post(
+        "/api/Auth/verifyCode", json={"email": email, "code": code.group(1)}
+    )
+    assert verify.status_code == 200, verify.text
+
+
+async def test_delivery_failure_rolls_back_the_signup(
+    client, session_factory, monkeypatch
+):
+    """A dead provider must not leave a user who can never be verified."""
+    from sqlalchemy import select
+
+    from app.services.email import base as email_base
+    from app.api.v1 import auth as auth_module
+    from app.db.models import User
+
+    class _Broken(email_base.EmailSender):
+        name = "broken"
+
+        async def send(self, message):
+            raise email_base.EmailDeliveryError("provider down")
+
+    monkeypatch.setattr(auth_module, "get_email_sender", lambda: _Broken())
+
+    email = f"user-{uuid.uuid4().hex[:8]}@example.com"
+    resp = await client.post(
+        "/api/Auth/SignUp",
+        json={"name": "Test User", "email": email, "password": "Passw0rd!"},
+    )
+
+    assert resp.status_code == 502
+    assert isinstance(resp.json()["detail"], str)
+
+    async with session_factory() as db:
+        assert await db.scalar(select(User).where(User.email == email)) is None

@@ -74,3 +74,11 @@ Check it worked
 │ http://localhost:5050        │ pgAdmin — nooshin.nexus@gmail.com / admin    │
 └──────────────────────────────┴──────────────────────────────────────────────┘
 
+
+
+
+-----------------reset password-----------------------
+The destination page/screen reads token from the query string, asks for a new password, and POSTs:
+
+POST /api/Auth/resetPassword
+{ "token": "rGlWPbmAUVS8MFMSZmVw0CCHmLfTUD7-E2Qpp-dMO5g", "password": "NewPassw0rd!" }

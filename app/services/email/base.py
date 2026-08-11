@@ -15,8 +15,6 @@ class EmailMessage:
     to: str
     subject: str
     text: str
-    # Optional: clients that can't render HTML fall back to `text`, so `text`
-    # is never allowed to be a placeholder like "view this in a browser".
     html: str | None = None
 
 

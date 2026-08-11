@@ -48,9 +48,6 @@ class Settings(BaseSettings):
     # "resend"  -> real delivery via Resend (requires RESEND_API_KEY).
     EMAIL_PROVIDER: Literal["console", "resend"] = "console"
     RESEND_API_KEY: str | None = None
-    # Must be an address on a domain verified in the Resend dashboard.
-    # `onboarding@resend.dev` is Resend's sandbox sender: it works with no
-    # domain setup but only delivers to your own account address.
     EMAIL_FROM: str = "Alluvi <onboarding@resend.dev>"
     EMAIL_TIMEOUT_SECONDS: float = 10.0
     # The reset link mailed to users. The token is appended as `?token=`.

@@ -1013,6 +1013,11 @@ described below.
 | `app/services/vision/stub.py` | Offline deterministic analyser |
 | `app/services/vision/claude.py` | Anthropic vision analyser |
 | `app/services/vision/factory.py` | Chooses the analyser from settings |
+| `app/services/email/base.py` | The sender interface + `EmailMessage` |
+| `app/services/email/templates.py` | Subject/body copy for each email |
+| `app/services/email/console.py` | Dev sender — logs instead of sending |
+| `app/services/email/resend.py` | Real delivery via the Resend API |
+| `app/services/email/factory.py` | Chooses the sender from settings |
 | `app/services/storage/base.py` | The storage interface |
 | `app/services/storage/local.py` | Disk storage + image processing |
 | `tests/conftest.py` | Test database and authenticated client fixtures |
@@ -1320,15 +1325,16 @@ Two takeaways worth more than the fix itself:
 
 Things deliberately left unbuilt, roughly in order of how soon you'll want them:
 
-1. **Email delivery.** OTP codes and reset links are written to the log
-   (`logger.info("OTP for %s: %s", ...)`). Wire up an email provider.
-2. **Apple/Google sign-in.** Both endpoints return `501` on purpose — the
+1. **Apple/Google sign-in.** Both endpoints return `501` on purpose — the
    identity token must be verified against the provider's public keys first.
    Accepting an unverified token would let anyone sign in as anyone.
-3. **Real object storage.** Photos are on local disk. Implement `StorageBackend`
+2. **Real object storage.** Photos are on local disk. Implement `StorageBackend`
    for S3 and serve time-limited URLs.
-4. **Achievement unlocking.** The badges are seeded and reported; nothing awards
+3. **Achievement unlocking.** The badges are seeded and reported; nothing awards
    them yet.
+4. **Arabic email copy.** `services/email/templates.py` is English-only, unlike
+   every other user-facing string. Give each builder a `lang` argument and
+   switch inside; no caller or provider changes.
 
 And the one piece of **client** work this backend assumes: the app currently
 stores only an access token and treats any 401 as a permanent logout. With

@@ -1,16 +1,3 @@
-"""Resend (https://resend.com) sender.
-
-Resend's send endpoint is a single JSON POST, so `httpx` — already a dependency
-for the test client — is all this needs. No SDK.
-
-Notes that matter here:
-  * The client is created once and reused. A new AsyncClient per email opens a
-    fresh TLS connection every time, which is slow and leaks sockets.
-  * Resend answers 4xx with a JSON body explaining why. That body is logged,
-    because "email didn't arrive" is otherwise very hard to debug — the usual
-    cause is an unverified `from` domain, and Resend says so explicitly.
-"""
-
 from __future__ import annotations
 
 import logging
