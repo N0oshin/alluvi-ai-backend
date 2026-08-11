@@ -1,0 +1,536 @@
+"""Food scanning and the meal log.
+
+Two separate calls by design (Figma screen 10):
+  * `POST food/analyze` runs the AI and returns a throwaway result.
+  * `POST meals` is the "Done" button — it commits the meal to the log.
+
+"Fix Results" is a plain recapture on the client: it discards the analysis and
+returns to the camera. There is deliberately no correction endpoint here.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, date, datetime, timedelta
+
+from fastapi import APIRouter, File, Query, UploadFile, status
+from sqlalchemy import func, select
+
+from app.core.deps import CurrentUser, Db, not_found
+from app.core.errors import AppError
+from app.db.models import (
+    DetectedItem,
+    FoodAnalysis,
+    Meal,
+    MealPhoto,
+    MealType,
+    NutritionPlan,
+)
+from app.schemas.common import MessageResponse
+from app.schemas.food import (
+    DaySummaryOut,
+    DetectedItemOut,
+    FavoriteOut,
+    FoodAnalysisOut,
+    MealOut,
+    SaveMealRequest,
+    UpdateMealRequest,
+    WeekDayOut,
+)
+from app.services.storage.local import build_key, get_storage, process_photo
+from app.services.vision.base import VisionAnalysisError
+from app.services.vision.factory import get_vision_provider
+
+router = APIRouter(tags=["food"])
+
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+
+
+def _meal_type_for(moment: datetime) -> MealType:
+    hour = moment.astimezone(UTC).hour
+    if hour < 11:
+        return MealType.breakfast
+    if hour < 16:
+        return MealType.lunch
+    if hour < 22:
+        return MealType.dinner
+    return MealType.snack
+
+
+async def _active_plan(db: Db, user_id: uuid.UUID) -> NutritionPlan | None:
+    return await db.scalar(
+        select(NutritionPlan)
+        .where(NutritionPlan.user_id == user_id, NutritionPlan.is_active.is_(True))
+        .order_by(NutritionPlan.created_at.desc())
+        .limit(1)
+    )
+
+
+def _progress(value: float, goal: float | None) -> float:
+    """Share of the daily target, clamped to 0..1 for the progress bars."""
+    if not goal:
+        return 0.0
+    return round(min(1.0, max(0.0, value / goal)), 3)
+
+
+def _format_time(moment: datetime) -> str:
+    """"12:07" — 24h avoids the %-I directive, which is not portable to Windows."""
+    return moment.astimezone(UTC).strftime("%H:%M")
+
+
+# --------------------------------------------------------------------------
+# Analyze
+# --------------------------------------------------------------------------
+
+
+@router.post("/food/analyze", response_model=FoodAnalysisOut)
+async def analyze_food(
+    user: CurrentUser,
+    db: Db,
+    image: UploadFile = File(...),
+) -> FoodAnalysisOut:
+    raw = await image.read()
+    if not raw:
+        raise AppError("food.no_image", code="NO_IMAGE")
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise AppError(
+            "food.image_too_large",
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            code="IMAGE_TOO_LARGE",
+        )
+
+    # Downscale + re-encode (which strips EXIF/GPS) before anything else sees it.
+    try:
+        processed, width, height = process_photo(raw)
+    except ValueError:
+        raise AppError("food.bad_image", code="BAD_IMAGE") from None
+
+    photo = MealPhoto(
+        user_id=user.id,
+        storage_key="",  # set below, once the id exists
+        mime_type="image/jpeg",
+        size_bytes=len(processed),
+        width=width,
+        height=height,
+    )
+    db.add(photo)
+    await db.flush()
+
+    photo.storage_key = build_key(user.id, photo.id)
+    storage = get_storage()
+    await storage.save(processed, key=photo.storage_key, mime_type="image/jpeg")
+
+    provider = get_vision_provider()
+    try:
+        result = await provider.analyze(processed, "image/jpeg")
+    except VisionAnalysisError as exc:
+        # Orphan the photo rather than leaving a dangling analysis row.
+        await storage.delete(photo.storage_key)
+        await db.delete(photo)
+        await db.flush()
+        raise AppError(exc.message_key, code="ANALYSIS_FAILED") from exc
+
+    analysis = FoodAnalysis(
+        user_id=user.id,
+        photo_id=photo.id,
+        name=result.name,
+        calories_per_serving=result.calories_per_serving,
+        protein_g_per_serving=result.protein_g_per_serving,
+        carbs_g_per_serving=result.carbs_g_per_serving,
+        fat_g_per_serving=result.fat_g_per_serving,
+        health_score=result.health_score,
+        health_score_max=result.health_score_max,
+        provider=provider.name,
+        model=result.model,
+    )
+    db.add(analysis)
+    await db.flush()
+
+    for item in result.detected_items:
+        db.add(
+            DetectedItem(
+                analysis_id=analysis.id, label=item.label, cx=item.cx, cy=item.cy
+            )
+        )
+    await db.flush()
+
+    plan = await _active_plan(db, user.id)
+    now = datetime.now(UTC)
+
+    return FoodAnalysisOut(
+        analysis_id=analysis.id,
+        name=result.name,
+        time_label=_format_time(now),
+        meal_type_label=_meal_type_for(now).value.upper(),
+        calories_per_serving=result.calories_per_serving,
+        protein_grams_per_serving=result.protein_g_per_serving,
+        carbs_grams_per_serving=result.carbs_g_per_serving,
+        fat_grams_per_serving=result.fat_g_per_serving,
+        protein_progress=_progress(
+            result.protein_g_per_serving, plan.protein_g if plan else None
+        ),
+        carbs_progress=_progress(
+            result.carbs_g_per_serving, plan.carbs_g if plan else None
+        ),
+        fat_progress=_progress(result.fat_g_per_serving, plan.fats_g if plan else None),
+        health_score=result.health_score,
+        health_score_max=result.health_score_max,
+        image_url=storage.url_for(photo.storage_key),
+        detected_items=[
+            DetectedItemOut(label=i.label, cx=i.cx, cy=i.cy)
+            for i in result.detected_items
+        ],
+    )
+
+
+# --------------------------------------------------------------------------
+# Meal log
+# --------------------------------------------------------------------------
+
+
+@router.post("/meals", response_model=MealOut, status_code=201)
+async def save_meal(payload: SaveMealRequest, user: CurrentUser, db: Db) -> MealOut:
+    """The "Done" button — commits an analysis to the log."""
+    analysis = await db.scalar(
+        select(FoodAnalysis).where(
+            FoodAnalysis.id == payload.analysis_id, FoodAnalysis.user_id == user.id
+        )
+    )
+    if analysis is None:
+        raise not_found()
+
+    quantity = payload.quantity
+    calories = analysis.calories_per_serving * quantity
+    edited = False
+    if payload.calories_override is not None:
+        # The pencil icon on the calories card. Recorded as user-supplied so
+        # it is never mistaken for an AI estimate.
+        calories = payload.calories_override
+        edited = True
+
+    eaten_at = payload.eaten_at or datetime.now(UTC)
+    if eaten_at.tzinfo is None:
+        eaten_at = eaten_at.replace(tzinfo=UTC)
+
+    meal_type = _meal_type_for(eaten_at)
+    if payload.meal_type:
+        try:
+            meal_type = MealType(payload.meal_type.lower())
+        except ValueError:
+            pass  # unknown label falls back to the time-of-day guess
+
+    meal = Meal(
+        user_id=user.id,
+        photo_id=analysis.photo_id,
+        analysis_id=analysis.id,
+        title=analysis.name,
+        meal_type=meal_type,
+        quantity=quantity,
+        calories=calories,
+        protein_g=analysis.protein_g_per_serving * quantity,
+        carbs_g=analysis.carbs_g_per_serving * quantity,
+        fat_g=analysis.fat_g_per_serving * quantity,
+        health_score=analysis.health_score,
+        calories_edited=edited,
+        eaten_at=eaten_at,
+        eaten_on=eaten_at.date(),
+        is_favorite=payload.is_favorite,
+    )
+    db.add(meal)
+    await db.flush()
+
+    analysis.saved_meal_id = meal.id
+    await db.flush()
+
+    return await _meal_response(db, meal)
+
+
+async def _meal_response(db: Db, meal: Meal) -> MealOut:
+    image_url = ""
+    if meal.photo_id:
+        photo = await db.scalar(select(MealPhoto).where(MealPhoto.id == meal.photo_id))
+        if photo:
+            image_url = get_storage().url_for(photo.storage_key)
+
+    return MealOut(
+        id=meal.id,
+        title=meal.title,
+        image_url=image_url,
+        calories=meal.calories,
+        protein_grams=meal.protein_g,
+        carbs_grams=meal.carbs_g,
+        fat_grams=meal.fat_g,
+        time=_format_time(meal.eaten_at),
+        meal_type=meal.meal_type.value,
+        health_score=meal.health_score,
+        is_favorite=meal.is_favorite,
+        eaten_at=meal.eaten_at,
+    )
+
+
+@router.get("/meals", response_model=list[MealOut])
+async def list_meals(
+    user: CurrentUser,
+    db: Db,
+    day: date | None = Query(default=None, description="Defaults to today (UTC)."),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[MealOut]:
+    target = day or datetime.now(UTC).date()
+    meals = (
+        await db.scalars(
+            select(Meal)
+            .where(Meal.user_id == user.id, Meal.eaten_on == target)
+            .order_by(Meal.eaten_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [await _meal_response(db, m) for m in meals]
+
+
+@router.patch("/meals/{meal_id}", response_model=MealOut)
+async def update_meal(
+    meal_id: uuid.UUID, payload: UpdateMealRequest, user: CurrentUser, db: Db
+) -> MealOut:
+    meal = await db.scalar(
+        select(Meal).where(Meal.id == meal_id, Meal.user_id == user.id)
+    )
+    if meal is None:
+        raise not_found()
+
+    if payload.quantity is not None and payload.quantity != meal.quantity:
+        analysis = None
+        if meal.analysis_id:
+            analysis = await db.scalar(
+                select(FoodAnalysis).where(FoodAnalysis.id == meal.analysis_id)
+            )
+        if analysis is not None:
+            q = payload.quantity
+            meal.quantity = q
+            meal.protein_g = analysis.protein_g_per_serving * q
+            meal.carbs_g = analysis.carbs_g_per_serving * q
+            meal.fat_g = analysis.fat_g_per_serving * q
+            if not meal.calories_edited:
+                meal.calories = analysis.calories_per_serving * q
+
+    if payload.calories is not None:
+        meal.calories = payload.calories
+        meal.calories_edited = True
+
+    if payload.is_favorite is not None:
+        meal.is_favorite = payload.is_favorite
+
+    if payload.meal_type:
+        try:
+            meal.meal_type = MealType(payload.meal_type.lower())
+        except ValueError:
+            pass
+
+    await db.flush()
+    return await _meal_response(db, meal)
+
+
+@router.delete("/meals/{meal_id}", response_model=MessageResponse)
+async def delete_meal(
+    meal_id: uuid.UUID, user: CurrentUser, db: Db
+) -> MessageResponse:
+    meal = await db.scalar(
+        select(Meal).where(Meal.id == meal_id, Meal.user_id == user.id)
+    )
+    if meal is None:
+        raise not_found()
+
+    # Deleting a meal deletes its photo object too — retention promise.
+    if meal.photo_id:
+        photo = await db.scalar(select(MealPhoto).where(MealPhoto.id == meal.photo_id))
+        if photo is not None:
+            await get_storage().delete(photo.storage_key)
+            await db.delete(photo)
+
+    await db.delete(meal)
+    await db.flush()
+    return MessageResponse(message="Meal deleted.")
+
+
+# --------------------------------------------------------------------------
+# Home dashboard
+# --------------------------------------------------------------------------
+
+
+@router.get("/home/summary", response_model=DaySummaryOut)
+async def day_summary(
+    user: CurrentUser,
+    db: Db,
+    day: date | None = Query(default=None),
+) -> DaySummaryOut:
+    """Home dashboard for one date.
+
+    Every macro figure is what's **left** against the goal — the design labels
+    them "Protein left" / "Carbs left" / "Fat left". Reporting consumed totals
+    here would be a very visible bug.
+    """
+    target = day or datetime.now(UTC).date()
+
+    totals = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(Meal.calories), 0),
+                func.coalesce(func.sum(Meal.protein_g), 0),
+                func.coalesce(func.sum(Meal.carbs_g), 0),
+                func.coalesce(func.sum(Meal.fat_g), 0),
+            ).where(Meal.user_id == user.id, Meal.eaten_on == target)
+        )
+    ).one()
+    consumed_cal, consumed_p, consumed_c, consumed_f = (int(v) for v in totals)
+
+    plan = await _active_plan(db, user.id)
+    cal_goal = plan.daily_calories if plan else 0
+    p_goal = plan.protein_g if plan else 0
+    c_goal = plan.carbs_g if plan else 0
+    f_goal = plan.fats_g if plan else 0
+
+    meals = (
+        await db.scalars(
+            select(Meal)
+            .where(Meal.user_id == user.id, Meal.eaten_on == target)
+            .order_by(Meal.eaten_at.desc())
+        )
+    ).all()
+
+    return DaySummaryOut(
+        date=target,
+        calories_left=max(0, cal_goal - consumed_cal),
+        calorie_goal=cal_goal,
+        calories_consumed=consumed_cal,
+        protein_left=max(0, p_goal - consumed_p),
+        protein_goal=p_goal,
+        carbs_left=max(0, c_goal - consumed_c),
+        carbs_goal=c_goal,
+        fat_left=max(0, f_goal - consumed_f),
+        fat_goal=f_goal,
+        meals=[await _meal_response(db, m) for m in meals],
+    )
+
+
+@router.get("/home/week", response_model=list[WeekDayOut])
+async def week_strip(
+    user: CurrentUser,
+    db: Db,
+    anchor: date | None = Query(default=None),
+) -> list[WeekDayOut]:
+    """The week calendar strip, Sunday through Saturday, with per-day
+    has-data state so the client can dim empty days."""
+    today = datetime.now(UTC).date()
+    pivot = anchor or today
+    # Python's weekday() is Monday=0; the strip starts on Sunday.
+    start = pivot - timedelta(days=(pivot.weekday() + 1) % 7)
+    days = [start + timedelta(days=i) for i in range(7)]
+
+    rows = (
+        await db.execute(
+            select(Meal.eaten_on, func.count(Meal.id))
+            .where(
+                Meal.user_id == user.id,
+                Meal.eaten_on >= days[0],
+                Meal.eaten_on <= days[-1],
+            )
+            .group_by(Meal.eaten_on)
+        )
+    ).all()
+    with_data = {row[0] for row in rows if row[1] > 0}
+
+    return [
+        WeekDayOut(
+            date=d,
+            day_label=d.strftime("%a")[0],
+            day_number=d.day,
+            has_data=d in with_data,
+            is_today=d == today,
+        )
+        for d in days
+    ]
+
+
+# --------------------------------------------------------------------------
+# Favorites
+# --------------------------------------------------------------------------
+
+
+@router.get("/favorites", response_model=list[FavoriteOut])
+async def list_favorites(user: CurrentUser, db: Db) -> list[FavoriteOut]:
+    """Favourites reference saved meals rather than being standalone records,
+    which is why the empty state reads "Save a meal from your history"."""
+    meals = (
+        await db.scalars(
+            select(Meal)
+            .where(Meal.user_id == user.id, Meal.is_favorite.is_(True))
+            .order_by(Meal.eaten_at.desc())
+        )
+    ).all()
+
+    out: list[FavoriteOut] = []
+    for meal in meals:
+        image_url = None
+        if meal.photo_id:
+            photo = await db.scalar(
+                select(MealPhoto).where(MealPhoto.id == meal.photo_id)
+            )
+            if photo:
+                image_url = get_storage().url_for(photo.storage_key)
+        out.append(
+            FavoriteOut(
+                id=meal.id,
+                title=meal.title,
+                kcal=meal.calories,
+                meal_type=meal.meal_type.value.capitalize(),
+                tag=meal.tag or _tag_for(meal),
+                image_url=image_url,
+                is_favorite=True,
+            )
+        )
+    return out
+
+
+def _tag_for(meal: Meal) -> str:
+    """The chip on the favourites card, derived from the macro split."""
+    total = meal.protein_g * 4 + meal.carbs_g * 4 + meal.fat_g * 9
+    if total <= 0:
+        return "BALANCED"
+    protein_share = (meal.protein_g * 4) / total
+    carb_share = (meal.carbs_g * 4) / total
+    if protein_share >= 0.35:
+        return "HIGH PROTEIN"
+    if carb_share <= 0.25:
+        return "LOW CARB"
+    if meal.health_score >= 8:
+        return "FIBER"
+    return "BALANCED"
+
+
+@router.post("/favorites/{meal_id}/toggle", response_model=FavoriteOut)
+async def toggle_favorite(
+    meal_id: uuid.UUID, user: CurrentUser, db: Db
+) -> FavoriteOut:
+    meal = await db.scalar(
+        select(Meal).where(Meal.id == meal_id, Meal.user_id == user.id)
+    )
+    if meal is None:
+        raise not_found()
+
+    meal.is_favorite = not meal.is_favorite
+    await db.flush()
+
+    image_url = None
+    if meal.photo_id:
+        photo = await db.scalar(select(MealPhoto).where(MealPhoto.id == meal.photo_id))
+        if photo:
+            image_url = get_storage().url_for(photo.storage_key)
+
+    return FavoriteOut(
+        id=meal.id,
+        title=meal.title,
+        kcal=meal.calories,
+        meal_type=meal.meal_type.value.capitalize(),
+        tag=meal.tag or _tag_for(meal),
+        image_url=image_url,
+        is_favorite=meal.is_favorite,
+    )

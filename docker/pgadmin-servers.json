@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Alluvi (local)",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "alluviai",
+      "Username": "alluviai",
+      "SSLMode": "prefer",
+      "Comment": "Auto-registered by docker-compose. Password is 'alluviai123'."
+    }
+  }
+}

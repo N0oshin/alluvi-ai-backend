@@ -1,0 +1,76 @@
+
+-----------image analysis--------
+Cost awareness. Every food photo scan is a paid API call. Keep VISION_PROVIDER=stub as your everyday default and flip to claude only when you're actually testing the AI path — that's exactly why the stub exists.
+
+---------photo storage---------
+In production — local disk breaks, for concrete reasons:
+- Run two server instances and photos uploaded to server A are invisible to server B.
+- Containers have ephemeral disks; a redeploy deletes every photo.
+- Your app server ends up spending its time serving image bytes instead of handling API requests.
+
+So production uses an object store — S3, Cloudflaroff of the design: only one file changes. base.py
+defines the contract (save, delete, delete_prefix, url_for). You write s3.py implementing those four methods, and get_storage() returns it based on STORAGE_BACKEND. No router, no model, no schema changes — because nothing else ever touched the bytes, only the key.
+
+Two things you'd handle differently in S3:
+- url_for() returns a presigned URL — a link that expires in ~15 minutes — rather than a permanent public path. Meal photos are health data; they shouldn't be guessable-and-forever.
+- delete_prefix() becomes the "Delete Account" mechanism. That's why the key is meals/{userId}/... — user id first — so wiping one person's photos is deleting one prefix
+
+
+
+All PowerShell, run from C:\workspace\alluvi-ai\backend.
+
+First time only
+
+python -m venv .venv                      # skip — .venv already exists
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+
+Every new terminal
+.\.venv\Scripts\Activate.ps1
+
+
+Start the stack
+docker compose up -d                  # database + pgAdmin
+python -m alembic init alembic
+python -m alembic upgrade head        # create the 16 tables
+python -m app.db.seed                 # achievements + legal text
+python run.py                         # the API
+
+
+
+Day-to-day
+
+# run
+.\.venv\Scripts\Activate.ps1
+python run.py                         # http://127.0.0.1:8000/docs
+python run.py --no-reload
+python run.py --port 8080
+
+# test  (SQLite in-memory — no Docker needed)
+python -m pytest -q
+python -m pytest tests/test_api.py::test_analyze_then_save_then_summary -v
+
+# after editing app/db/models.py
+python -m alembic revision --autogenerate -m "what changed"
+python -m alembic upgrade head
+
+# docker
+docker compose ps
+docker compose logs -f postgres
+docker compose stop                   # keeps data
+docker compose down -v                # DELETES the database
+
+Check it worked
+
+┌──────────────────────────────┬──────────────────────────────────────────────┐
+│             URL              │                     What                     │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ http://127.0.0.1:8000/docs   │ Swagger — call any endpoint from the browser │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ http://127.0.0.1:8000/health │ Should return OK                             │
+├──────────────────────────────┼──────────────────────────────────────────────┤
+│ http://localhost:5050        │ pgAdmin — nooshin.nexus@gmail.com / admin    │
+└──────────────────────────────┴──────────────────────────────────────────────┘
+

@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: alluvi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: alluviai
+      POSTGRES_PASSWORD: alluviai123
+      POSTGRES_DB: alluviai
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alluviai -d alluviai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: alluvi-pgadmin
+    restart: unless-stopped
+    environment:
+      # Must be a real-looking domain: pgAdmin rejects reserved TLDs such as
+      # `.local` and crash-loops on startup.
+      PGADMIN_DEFAULT_EMAIL: nooshin.nexus@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      # Skips the "enter master password" prompt on every browser session.
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      # Pre-registers the Postgres server so pgAdmin opens with it connected.
+      - ./docker/pgadmin-servers.json:/pgadmin4/servers.json:ro
+
+volumes:
+  postgres_data:
+  pgadmin_data:
