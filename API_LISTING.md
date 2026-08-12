@@ -2,7 +2,7 @@
 
 All routes below are mounted under the `/api` prefix (`settings.API_V1_PREFIX`), except `/health` and the `/media` static mount, which sit at the root.
 
-Every request/response model inherits `CamelModel`, so **all JSON field names are camelCase on the wire** even though the Python attributes are snake_case. The names in this document are the wire names.
+Every request/response model inherits `CamelModel`, so **all JSON field names are camelCase on the wire**. The names in this document are the wire names.
 
 Auth is `Authorization: Bearer <accessToken>`. "Auth" column: **Yes** = requires a valid access token.
 
@@ -13,13 +13,13 @@ Error responses share one envelope from `app/core/errors.py` and are not repeate
 ## Meta
 
 | Method | Path | Auth |
-|---|---|---|
+| --- | --- | --- |
 | GET | `/health` | No |
 
 **Response** — `dict[str, str]`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `status` | string (always `"ok"`) |
 
 Also mounted: `GET /media/{path}` — static files (meal photos), `GET /docs`, `GET /openapi.json`.
@@ -33,15 +33,15 @@ Also mounted: `GET /media/{path}` — static files (meal photos), `GET /docs`, `
 **Request** — `SignUpRequest`
 
 | Field | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `name` | string | 1–120 chars |
-| `email` | string (email) | |
+| `email` | string (email) |  |
 | `password` | string | 8+ chars, must contain a number and a symbol |
 
 **Response** — `SignUpResponse`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `email` | string |
 | `verificationRequired` | boolean (default `true`) |
 
@@ -54,18 +54,18 @@ No session is issued — the emailed 6-digit code must be verified first.
 **Request** — `LoginRequest`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `email` | string (email) |
 | `password` | string |
 
 **Response** — `TokenResponse`
 
 | Field | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `token` | string | access token |
-| `refreshToken` | string | |
+| `refreshToken` | string |  |
 | `expiresIn` | integer | seconds |
-| `firstName` | string | |
+| `firstName` | string |  |
 | `lastMobileDigit` | string | always `""` |
 | `isNewUser` | boolean | default `false` |
 | `emailVerified` | boolean | default `true` |
@@ -79,8 +79,8 @@ Returns 409 `EMAIL_NOT_VERIFIED` (and re-sends a code) if the address is unverif
 **Request** — `VerifyCodeRequest`
 
 | Field | Type | Notes |
-|---|---|---|
-| `email` | string (email) | |
+| --- | --- | --- |
+| `email` | string (email) |  |
 | `code` | string | exactly 6 chars |
 
 **Response** — `TokenResponse` (see above)
@@ -92,13 +92,13 @@ Returns 409 `EMAIL_NOT_VERIFIED` (and re-sends a code) if the address is unverif
 **Request** — `ResendCodeRequest`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `email` | string (email) |
 
 **Response** — `MessageResponse`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `message` | string |
 
 Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re-requested too soon.
@@ -110,7 +110,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Request** — `ForgotPasswordRequest`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `email` | string (email) |
 
 **Response** — `MessageResponse` (`message`: string). Emails a reset **link**, not a code.
@@ -122,7 +122,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Request** — `ResetPasswordRequest`
 
 | Field | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `token` | string | from the emailed link |
 | `password` | string | same policy as sign-up |
 
@@ -136,9 +136,9 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Request** — `SocialAuthRequest`
 
 | Field | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `identityToken` | string | provider identity JWT |
-| `name` | string \| null | only used on first sign-in |
+| `name` | string \ | null |
 
 **Response** — `TokenResponse` (see above)
 
@@ -151,7 +151,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Request** — `RefreshRequest`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `refreshToken` | string |
 
 **Response** — `TokenResponse` (see above). Rotates the token; replaying a consumed token revokes the whole family.
@@ -163,7 +163,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Request** — `LogoutRequest`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `refreshToken` | string |
 
 **Response** — `MessageResponse` (`message`: string). Idempotent.
@@ -185,25 +185,25 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Request** — `PlanRequest`
 
 | Field | Type | Notes |
-|---|---|---|
-| `gender` | string \| null | `male` \| `female` \| `other` |
-| `activityLevel` | string \| null | `low` \| `moderate` \| `high` |
+| --- | --- | --- |
+| `gender` | string \ | null |
+| `activityLevel` | string \ | null |
 | `heightCm` | float | default 170, 50 < x < 280 |
 | `weightKg` | float | default 65, 20 < x < 500 |
-| `goal` | string \| null | `lose` \| `maintain` \| `gain` |
+| `goal` | string \ | null |
 | `desiredWeightKg` | float | default 58, 20 < x < 500 |
-| `birthday` | date \| null | |
+| `birthday` | date \ | null |
 
 **Response** — `PlanOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `dailyCalories` | integer |
 | `proteinG` | integer |
 | `carbsG` | integer |
 | `fatsG` | integer |
 | `weightDeltaKg` | float |
-| `targetDate` | date \| null |
+| `targetDate` | date \ |
 | `planVersion` | integer |
 | `isOverride` | boolean |
 | `computedAt` | datetime |
@@ -223,7 +223,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Response** — `NutritionGoalsOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `calories` | float |
 | `protein` | float |
 | `carbs` | float |
@@ -239,7 +239,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Request** — `NutritionGoalsUpdate`
 
 | Field | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `calories` | float | 0 < x < 20000 |
 | `protein` | float | 0 ≤ x < 2000 |
 | `carbs` | float | 0 ≤ x < 2000 |
@@ -256,28 +256,28 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Request** — `multipart/form-data`
 
 | Field | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `image` | file | required; max 15 MB; re-encoded to JPEG |
 
 **Response** — `FoodAnalysisOut`
 
 | Field | Type | Notes |
-|---|---|---|
-| `analysisId` | UUID | |
-| `name` | string | |
+| --- | --- | --- |
+| `analysisId` | UUID |  |
+| `name` | string |  |
 | `timeLabel` | string | `"HH:MM"` |
 | `mealTypeLabel` | string | e.g. `"LUNCH"` |
-| `caloriesPerServing` | integer | |
-| `proteinGramsPerServing` | integer | |
-| `carbsGramsPerServing` | integer | |
-| `fatGramsPerServing` | integer | |
+| `caloriesPerServing` | integer |  |
+| `proteinGramsPerServing` | integer |  |
+| `carbsGramsPerServing` | integer |  |
+| `fatGramsPerServing` | integer |  |
 | `proteinProgress` | float | 0..1 share of daily target |
 | `carbsProgress` | float | 0..1 |
 | `fatProgress` | float | 0..1 |
-| `healthScore` | integer | |
+| `healthScore` | integer |  |
 | `healthScoreMax` | integer | default 10 |
-| `imageUrl` | string \| null | |
-| `detectedItems` | array of `DetectedItemOut` | |
+| `imageUrl` | string \ | null |
+| `detectedItems` | array of `DetectedItemOut` |  |
 
 `DetectedItemOut`: `label` (string), `cx` (float), `cy` (float).
 
@@ -288,18 +288,18 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Request** — `SaveMealRequest`
 
 | Field | Type | Notes |
-|---|---|---|
-| `analysisId` | UUID | |
+| --- | --- | --- |
+| `analysisId` | UUID |  |
 | `quantity` | integer | default 1, 1–99 |
-| `mealType` | string \| null | falls back to time-of-day guess |
-| `caloriesOverride` | integer \| null | 0–20000 |
+| `mealType` | string \ | null |
+| `caloriesOverride` | integer \ | null |
 | `isFavorite` | boolean | default `false` |
-| `eatenAt` | datetime \| null | defaults to now (UTC) |
+| `eatenAt` | datetime \ | null |
 
 **Response** — `MealOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `id` | UUID |
 | `title` | string |
 | `imageUrl` | string (default `""`) |
@@ -320,8 +320,8 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Query parameters**
 
 | Param | Type | Notes |
-|---|---|---|
-| `day` | date \| null | defaults to today (UTC) |
+| --- | --- | --- |
+| `day` | date \ | null |
 | `limit` | integer | default 50, 1–200 |
 
 **Response** — array of `MealOut` (see above)
@@ -335,11 +335,11 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Request** — `UpdateMealRequest`
 
 | Field | Type | Notes |
-|---|---|---|
-| `quantity` | integer \| null | 1–99 |
-| `calories` | integer \| null | 0–20000 |
-| `isFavorite` | boolean \| null | |
-| `mealType` | string \| null | |
+| --- | --- | --- |
+| `quantity` | integer \ | null |
+| `calories` | integer \ | null |
+| `isFavorite` | boolean \ | null |
+| `mealType` | string \ | null |
 
 **Response** — `MealOut` (see above)
 
@@ -360,18 +360,18 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Response** — `DaySummaryOut`
 
 | Field | Type | Notes |
-|---|---|---|
-| `date` | date | |
+| --- | --- | --- |
+| `date` | date |  |
 | `caloriesLeft` | integer | remaining, not consumed |
-| `calorieGoal` | integer | |
-| `caloriesConsumed` | integer | |
-| `proteinLeft` | integer | |
-| `proteinGoal` | integer | |
-| `carbsLeft` | integer | |
-| `carbsGoal` | integer | |
-| `fatLeft` | integer | |
-| `fatGoal` | integer | |
-| `meals` | array of `MealOut` | |
+| `calorieGoal` | integer |  |
+| `caloriesConsumed` | integer |  |
+| `proteinLeft` | integer |  |
+| `proteinGoal` | integer |  |
+| `carbsLeft` | integer |  |
+| `carbsGoal` | integer |  |
+| `fatLeft` | integer |  |
+| `fatGoal` | integer |  |
+| `meals` | array of `MealOut` |  |
 
 ---
 
@@ -382,7 +382,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Response** — array of `WeekDayOut` (7 items, Sunday→Saturday)
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `date` | date |
 | `dayLabel` | string (single letter) |
 | `dayNumber` | integer |
@@ -400,13 +400,13 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Response** — array of `FavoriteOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `id` | UUID |
 | `title` | string |
 | `kcal` | integer |
 | `mealType` | string |
 | `tag` | string |
-| `imageUrl` | string \| null |
+| `imageUrl` | string \ |
 | `isFavorite` | boolean |
 
 ---
@@ -426,17 +426,17 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 **Query parameters**
 
 | Param | Type | Notes |
-|---|---|---|
-| `range` | string | default `90d`; one of `90d` \| `6m` \| `1y` \| `all` |
+| --- | --- | --- |
+| `range` | string | default `90d`; one of `90d` \ |
 
 Also reads the `Accept-Language` header for the localised BMI category label.
 
 **Response** — `AnalyticsOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `goalProgress` | `GoalProgressOut` |
-| `currentBmi` | `BmiOut` \| null |
+| `currentBmi` | `BmiOut` \ |
 | `streak` | `StreakOut` |
 | `caloriesThisWeek` | array of `DayCaloriesOut` |
 
@@ -457,7 +457,7 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Response** — `ProfileOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `displayName` | string |
 | `username` | string |
 | `isPremium` | boolean |
@@ -465,7 +465,7 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 | `calorieGoal` | integer |
 | `streakDays` | integer |
 | `appleHealthConnected` | boolean |
-| `lastSyncedAt` | datetime \| null |
+| `lastSyncedAt` | datetime \ |
 
 ---
 
@@ -476,13 +476,13 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Response** — `ProfileSummaryOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `displayName` | string |
-| `goal` | string \| null |
+| `goal` | string \ |
 | `goalLabel` | string |
-| `currentWeightKg` | float \| null |
-| `goalWeightKg` | float \| null |
-| `dailyCalories` | integer \| null |
+| `currentWeightKg` | float \ |
+| `goalWeightKg` | float \ |
+| `dailyCalories` | integer \ |
 
 ---
 
@@ -493,12 +493,12 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Response** — `PersonalDetailsOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `name` | string |
 | `email` | string |
 | `gender` | string |
 | `heightCm` | float |
-| `birthday` | date \| null |
+| `birthday` | date \ |
 | `emailVerificationRequired` | boolean (default `false`) |
 
 ---
@@ -508,12 +508,12 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Request** — `PersonalDetailsUpdate`
 
 | Field | Type | Notes |
-|---|---|---|
-| `name` | string \| null | max 120 |
-| `email` | string (email) \| null | changing it clears `emailVerified` and sends a code |
-| `gender` | string \| null | |
-| `heightCm` | float \| null | 50 < x < 280 |
-| `birthday` | date \| null | |
+| --- | --- | --- |
+| `name` | string \ | null |
+| `email` | string (email) \ | null |
+| `gender` | string \ | null |
+| `heightCm` | float \ | null |
+| `birthday` | date \ | null |
 
 **Response** — `PersonalDetailsOut` (see above). 409 `EMAIL_TAKEN` on a clash.
 
@@ -526,12 +526,12 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Response** — `CurrentWeightOut`
 
 | Field | Type | Notes |
-|---|---|---|
-| `startingWeightKg` | float | |
-| `currentWeightKg` | float | |
-| `goalWeightKg` | float | |
+| --- | --- | --- |
+| `startingWeightKg` | float |  |
+| `currentWeightKg` | float |  |
+| `goalWeightKg` | float |  |
 | `estimatedGoalDate` | string | pre-formatted, e.g. `"Est. Sep 14"` |
-| `targetDate` | date \| null | ISO equivalent |
+| `targetDate` | date \ | null |
 
 ---
 
@@ -540,9 +540,9 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Request** — `WeightUpdateRequest`
 
 | Field | Type | Notes |
-|---|---|---|
-| `currentWeightKg` | float \| null | 20 < x < 500 |
-| `goalWeightKg` | float \| null | 20 < x < 500 |
+| --- | --- | --- |
+| `currentWeightKg` | float \ | null |
+| `goalWeightKg` | float \ | null |
 
 **Response** — `CurrentWeightOut` (see above). Triggers a plan recalculation.
 
@@ -555,7 +555,7 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Response** — array of `WeightEntryOut`, oldest first
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `date` | date |
 | `kg` | float |
 | `source` | string |
@@ -567,7 +567,7 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Request** — `HealthSyncRequest`
 
 | Field | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `samples` | array of `HealthSample` | max 1000 |
 
 `HealthSample`: `externalId` (string, HealthKit UUID — the dedupe key), `kg` (float), `recordedOn` (date).
@@ -575,7 +575,7 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Response** — `HealthSyncOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `imported` | integer |
 | `skipped` | integer |
 | `lastSyncedAt` | datetime |
@@ -589,7 +589,7 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Response** — `NotificationSettingsOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `mealReminders` | boolean |
 | `streakReminder` | boolean |
 | `weeklyReport` | boolean |
@@ -615,7 +615,7 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Response** — `AchievementsOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `unlocked` | integer |
 | `total` | integer |
 | `items` | array of `AchievementOut` |
@@ -631,9 +631,9 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Response** — array of `RingColorOut` (5 items: Calories, Protein, Carbs, Fats, Health score)
 
 | Field | Type | Notes |
-|---|---|---|
-| `title` | string | |
-| `description` | string | |
+| --- | --- | --- |
+| `title` | string |  |
+| `description` | string |  |
 | `value` | float | 0..1 |
 | `colorToken` | string | theme token, not a hex |
 
@@ -646,7 +646,7 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 **Response** — `InviteInfoOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `inviteCode` | string |
 | `rewardTitle` | string |
 | `rewardSubtitle` | string |
@@ -661,7 +661,7 @@ Static copy — no referral reward is tracked or granted.
 **Request** — `FeedbackRequest`
 
 | Field | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `message` | string | 1–5000 chars |
 
 **Response** — `MessageResponse` (`message`: string)
@@ -678,7 +678,7 @@ Static copy — no referral reward is tracked or granted.
 **Response** — `LegalDocumentOut`
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | `lastUpdated` | string (e.g. `"March 04, 2026"`) |
 | `intro` | string |
 | `sections` | array of `LegalSectionOut` |
@@ -697,7 +697,7 @@ Both endpoints return a **bare JSON boolean**, not an envelope — the shipped c
 **Request** — `DeviceTokenRequest`
 
 | Field | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `token` | string | 1–512 chars; APNs or FCM |
 
 **Response** — boolean (`true`)
