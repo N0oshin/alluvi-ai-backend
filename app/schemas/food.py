@@ -51,6 +51,9 @@ class FoodAnalysisOut(CamelModel):
     # client's cue to ask them to confirm rather than accept it silently.
     estimated_portion_grams: int | None = None
     portion_confidence: str = "medium"
+    # What the portion was calibrated against, e.g. "fork". Null means nothing
+    # of known size was in frame — the cue to ask for one on the next shot.
+    scale_reference: str | None = None
     image_url: str | None = None
     detected_items: list[DetectedItemOut] = Field(default_factory=list)
 

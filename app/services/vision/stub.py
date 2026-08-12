@@ -26,12 +26,18 @@ _DISHES = [
 
 _CONFIDENCE = ["low", "medium", "high"]
 
+_SCALE_REFERENCES = ["fork", "hand", None]
+
 
 class StubVisionProvider(VisionProvider):
     name = "stub"
 
     async def analyze(
-        self, image_bytes: bytes, mime_type: str = "image/jpeg"
+        self,
+        image_bytes: bytes,
+        mime_type: str = "image/jpeg",
+        *,
+        container: str | None = None,
     ) -> FoodAnalysisResult:
         digest = hashlib.sha256(image_bytes).digest()
         name, ingredients = _DISHES[digest[0] % len(_DISHES)]
@@ -63,6 +69,9 @@ class StubVisionProvider(VisionProvider):
             # Roughly food-like: most plated meals land between 150g and 650g.
             estimated_portion_grams=150 + digest[21] % 500,
             portion_confidence=_CONFIDENCE[digest[22] % len(_CONFIDENCE)],
+            # None on roughly a third of images, so the client's "include a
+            # fork next time" nudge has something to exercise offline.
+            scale_reference=_SCALE_REFERENCES[digest[23] % len(_SCALE_REFERENCES)],
             detected_items=items,
             model="stub",
         )

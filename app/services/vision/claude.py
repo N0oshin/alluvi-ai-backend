@@ -21,6 +21,7 @@ import logging
 
 from app.core.config import settings
 from app.services.vision.base import (
+    CONTAINERS,
     DetectedItemResult,
     FoodAnalysisResult,
     NotFoodError,
@@ -50,6 +51,12 @@ photo, not the dish: a flat plate shot at an angle with a fork or hand for \
 scale is "high"; a typical overhead shot of a plated meal is "medium"; a bowl, \
 soup, stew, or anything whose depth you cannot see is "low". Say "low" when \
 you are unsure — an honest low is more useful than a confident guess.
+
+Before estimating the weight, look for something of known size to calibrate \
+against: a fork, spoon, knife, chopstick, a hand or finger, a standard mug or \
+drinks can. These vary far less between households than plates and bowls do, \
+so anchor the portion to one whenever it is visible. Report which you used in \
+scale_reference, or null if nothing usable was in frame.
 
 health_score rates overall nutritional quality out of 10: whole foods, fibre, \
 and a balanced macro split score high; ultra-processed, fried, and \
@@ -93,6 +100,13 @@ _SCHEMA = {
             "enum": ["low", "medium", "high"],
             "description": "How well the photo pins down the portion weight.",
         },
+        "scale_reference": {
+            "type": ["string", "null"],
+            "description": (
+                "Known-size object used to calibrate the portion, e.g. 'fork' "
+                "or 'hand'. Null if none was visible."
+            ),
+        },
         "detected_items": {
             "type": "array",
             "description": "Visible ingredients with their centre in the frame.",
@@ -124,6 +138,7 @@ _SCHEMA = {
         "health_score",
         "estimated_portion_grams",
         "portion_confidence",
+        "scale_reference",
         "detected_items",
     ],
     "additionalProperties": False,
@@ -154,7 +169,11 @@ class ClaudeVisionProvider(VisionProvider):
         self._model = settings.VISION_MODEL
 
     async def analyze(
-        self, image_bytes: bytes, mime_type: str = "image/jpeg"
+        self,
+        image_bytes: bytes,
+        mime_type: str = "image/jpeg",
+        *,
+        container: str | None = None,
     ) -> FoodAnalysisResult:
         import anthropic
 
@@ -162,6 +181,12 @@ class ClaudeVisionProvider(VisionProvider):
             mime_type = "image/jpeg"
 
         encoded = base64.standard_b64encode(image_bytes).decode("ascii")
+
+        # The hint rides on the user turn rather than the system prompt so the
+        # system prompt stays byte-identical across requests and can be cached.
+        prompt = "Analyse this meal photo."
+        if container in CONTAINERS:
+            prompt += f" The user says it is served in a {container}."
 
         try:
             response = await self._client.messages.create(
@@ -184,10 +209,7 @@ class ClaudeVisionProvider(VisionProvider):
                                     "data": encoded,
                                 },
                             },
-                            {
-                                "type": "text",
-                                "text": "Analyse this meal photo.",
-                            },
+                            {"type": "text", "text": prompt},
                         ],
                     }
                 ],
@@ -265,6 +287,11 @@ def _to_result(data: dict, *, model: str) -> FoodAnalysisResult:
             data.get("portion_confidence")
             if data.get("portion_confidence") in _CONFIDENCE_LEVELS
             else "medium"
+        ),
+        scale_reference=(
+            str(data["scale_reference"]).strip()[:40] or None
+            if data.get("scale_reference")
+            else None
         ),
         detected_items=items,
         model=model,

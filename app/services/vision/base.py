@@ -9,6 +9,13 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass, field
 
+# What the user can tell us the food is served in. Deliberately coarse: the
+# point is to bound the depth the camera cannot see, and a longer list would
+# only make the client's picker slower to use than it is worth.
+CONTAINERS = frozenset(
+    {"plate", "bowl", "cup", "glass", "packaged", "other"}
+)
+
 
 @dataclass(slots=True)
 class DetectedItemResult:
@@ -43,6 +50,11 @@ class FoodAnalysisResult:
     # and a low confidence is the cue to ask rather than guess silently.
     estimated_portion_grams: int | None = None
     portion_confidence: str = "medium"
+    # What the provider calibrated the portion against — cutlery and hands are
+    # near-standard in size, so one in frame is worth more than any prompting.
+    # None means nothing usable was visible, which is the client's cue to ask
+    # for one next time rather than show a tip nobody reads.
+    scale_reference: str | None = None
     detected_items: list[DetectedItemResult] = field(default_factory=list)
     model: str | None = None
 
@@ -81,7 +93,16 @@ class VisionProvider(abc.ABC):
 
     @abc.abstractmethod
     async def analyze(
-        self, image_bytes: bytes, mime_type: str = "image/jpeg"
+        self,
+        image_bytes: bytes,
+        mime_type: str = "image/jpeg",
+        *,
+        container: str | None = None,
     ) -> FoodAnalysisResult:
-        """Analyse a food photo. Raises VisionAnalysisError on failure."""
+        """Analyse a food photo. Raises VisionAnalysisError on failure.
+
+        `container` is an optional user-supplied hint from CONTAINERS. Depth is
+        what a photo hides, so knowing a dish is a bowl rather than a plate
+        bounds the portion before any visual reasoning starts.
+        """
         raise NotImplementedError

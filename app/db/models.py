@@ -352,6 +352,11 @@ class FoodAnalysis(UUIDPrimaryKey, Timestamps, Base):
         Enum(PortionConfidence, name="portion_confidence"),
         default=PortionConfidence.medium,
     )
+    # What the model calibrated the portion against ("fork", "hand"), and what
+    # the user said the food was served in. Kept because an estimate is only
+    # reviewable against the inputs that produced it.
+    scale_reference: Mapped[str | None] = mapped_column(String(40), default=None)
+    container_hint: Mapped[str | None] = mapped_column(String(20), default=None)
 
     provider: Mapped[str] = mapped_column(String(40), default="stub")
     model: Mapped[str | None] = mapped_column(String(80), default=None)

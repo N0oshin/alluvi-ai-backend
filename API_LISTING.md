@@ -258,6 +258,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 | Field | Type | Notes |
 | --- | --- | --- |
 | `image` | file | required; max 15 MB; re-encoded to JPEG |
+| `container` | string | optional; `plate` \| `bowl` \| `cup` \| `glass` \| `packaged` \| `other`. Bounds the depth the photo cannot show. An unrecognised value is ignored, not rejected |
 
 **Response** — `FoodAnalysisOut`
 
@@ -278,6 +279,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 | `healthScoreMax` | integer | default 10 |
 | `estimatedPortionGrams` | integer \ | null | portion the estimate assumes |
 | `portionConfidence` | string | `low` \| `medium` \| `high` |
+| `scaleReference` | string \ | null | known-size object the portion was calibrated against, e.g. `"fork"`; `null` = none visible |
 | `imageUrl` | string \ | null |
 | `detectedItems` | array of `DetectedItemOut` |  |
 

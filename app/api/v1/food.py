@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
-from fastapi import APIRouter, File, Query, UploadFile, status
+from fastapi import APIRouter, File, Form, Query, UploadFile, status
 from sqlalchemy import func, select
 
 from app.core.deps import CurrentUser, Db, not_found
@@ -39,7 +39,7 @@ from app.schemas.food import (
     WeekDayOut,
 )
 from app.services.storage.local import build_key, get_storage, process_photo
-from app.services.vision.base import VisionAnalysisError
+from app.services.vision.base import CONTAINERS, VisionAnalysisError
 from app.services.vision.factory import get_vision_provider
 
 router = APIRouter(tags=["food"])
@@ -89,6 +89,7 @@ async def analyze_food(
     user: CurrentUser,
     db: Db,
     image: UploadFile = File(...),
+    container: str | None = Form(default=None),
 ) -> FoodAnalysisOut:
     raw = await image.read()
     if not raw:
@@ -121,9 +122,16 @@ async def analyze_food(
     storage = get_storage()
     await storage.save(processed, key=photo.storage_key, mime_type="image/jpeg")
 
+    # An unrecognised value is dropped rather than rejected: the hint only
+    # improves the estimate, so a client sending a label this build does not
+    # know should still get an analysis back.
+    hint = container.strip().lower() if container else None
+    if hint not in CONTAINERS:
+        hint = None
+
     provider = get_vision_provider()
     try:
-        result = await provider.analyze(processed, "image/jpeg")
+        result = await provider.analyze(processed, "image/jpeg", container=hint)
     except VisionAnalysisError as exc:
         # Orphan the photo rather than leaving a dangling analysis row.
         await storage.delete(photo.storage_key)
@@ -143,6 +151,8 @@ async def analyze_food(
         health_score_max=result.health_score_max,
         estimated_portion_grams=result.estimated_portion_grams,
         portion_confidence=PortionConfidence(result.portion_confidence),
+        scale_reference=result.scale_reference,
+        container_hint=hint,
         provider=provider.name,
         model=result.model,
     )
@@ -180,6 +190,7 @@ async def analyze_food(
         health_score_max=result.health_score_max,
         estimated_portion_grams=result.estimated_portion_grams,
         portion_confidence=result.portion_confidence,
+        scale_reference=result.scale_reference,
         image_url=storage.url_for(photo.storage_key),
         detected_items=[
             DetectedItemOut(label=i.label, cx=i.cx, cy=i.cy)
