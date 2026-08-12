@@ -54,7 +54,10 @@ class SaveMealRequest(CamelModel):
     """The "Done" button. Analysis and saving are two separate calls."""
 
     analysis_id: uuid.UUID
-    quantity: int = Field(default=1, ge=1, le=99)
+    # Fractional so "I ate half of it" is expressible — the commonest
+    # correction there is. The UI offers 0.25 steps; the bounds here only
+    # keep absurd values out, they do not enforce the step.
+    quantity: float = Field(default=1.0, gt=0, le=99)
     meal_type: str | None = None
     # Set when the user edited the number via the pencil icon.
     calories_override: int | None = Field(default=None, ge=0, le=20000)
@@ -80,7 +83,7 @@ class MealOut(CamelModel):
 
 
 class UpdateMealRequest(CamelModel):
-    quantity: int | None = Field(default=None, ge=1, le=99)
+    quantity: float | None = Field(default=None, gt=0, le=99)
     calories: int | None = Field(default=None, ge=0, le=20000)
     is_favorite: bool | None = None
     meal_type: str | None = None

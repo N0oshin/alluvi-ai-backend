@@ -42,13 +42,18 @@ class FoodAnalysisResult:
     detected_items: list[DetectedItemResult] = field(default_factory=list)
     model: str | None = None
 
-    def as_totals(self, quantity: int) -> tuple[int, int, int, int]:
-        q = max(1, quantity)
+    def as_totals(self, quantity: float) -> tuple[int, int, int, int]:
+        """Scale per-serving figures to a meal total.
+
+        `quantity` is fractional (0.5 = half the plate), so the products are
+        rounded back to whole units — the client renders integers.
+        """
+        q = max(0.0, float(quantity))
         return (
-            self.calories_per_serving * q,
-            self.protein_g_per_serving * q,
-            self.carbs_g_per_serving * q,
-            self.fat_g_per_serving * q,
+            round(self.calories_per_serving * q),
+            round(self.protein_g_per_serving * q),
+            round(self.carbs_g_per_serving * q),
+            round(self.fat_g_per_serving * q),
         )
 
 

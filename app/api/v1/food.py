@@ -188,6 +188,32 @@ async def analyze_food(
 # --------------------------------------------------------------------------
 
 
+def _macro_scale(
+    analysis: FoodAnalysis, quantity: float, calories: int, *, edited: bool
+) -> float:
+    """How far to scale the per-serving macros for this meal.
+
+    Without an edit that is just the quantity. With one it is derived from the
+    calorie figure instead, because a user editing calories is correcting the
+    portion, not the energy alone: protein and carbs are 4 kcal per gram and
+    fat is 9, so halving the calories while leaving the macros untouched
+    stores a row that contradicts itself — and every analytics total built on
+    that row inherits the error.
+    """
+    if not edited or analysis.calories_per_serving <= 0:
+        return quantity
+    return calories / analysis.calories_per_serving
+
+
+def _scaled_macros(analysis: FoodAnalysis, scale: float) -> tuple[int, int, int]:
+    """Per-serving macros scaled and rounded to the whole grams the UI shows."""
+    return (
+        round(analysis.protein_g_per_serving * scale),
+        round(analysis.carbs_g_per_serving * scale),
+        round(analysis.fat_g_per_serving * scale),
+    )
+
+
 @router.post("/meals", response_model=MealOut, status_code=201)
 async def save_meal(payload: SaveMealRequest, user: CurrentUser, db: Db) -> MealOut:
     """The "Done" button — commits an analysis to the log."""
@@ -199,14 +225,20 @@ async def save_meal(payload: SaveMealRequest, user: CurrentUser, db: Db) -> Meal
     if analysis is None:
         raise not_found()
 
-    quantity = payload.quantity
-    calories = analysis.calories_per_serving * quantity
+    # Snapped to 2dp so a float like 0.30000000000000004 never reaches the DB
+    # or the client; the UI only ever sends quarter steps.
+    quantity = round(payload.quantity, 2)
+    calories = round(analysis.calories_per_serving * quantity)
     edited = False
     if payload.calories_override is not None:
         # The pencil icon on the calories card. Recorded as user-supplied so
         # it is never mistaken for an AI estimate.
         calories = payload.calories_override
         edited = True
+
+    protein_g, carbs_g, fat_g = _scaled_macros(
+        analysis, _macro_scale(analysis, quantity, calories, edited=edited)
+    )
 
     eaten_at = payload.eaten_at or datetime.now(UTC)
     if eaten_at.tzinfo is None:
@@ -227,9 +259,9 @@ async def save_meal(payload: SaveMealRequest, user: CurrentUser, db: Db) -> Meal
         meal_type=meal_type,
         quantity=quantity,
         calories=calories,
-        protein_g=analysis.protein_g_per_serving * quantity,
-        carbs_g=analysis.carbs_g_per_serving * quantity,
-        fat_g=analysis.fat_g_per_serving * quantity,
+        protein_g=protein_g,
+        carbs_g=carbs_g,
+        fat_g=fat_g,
         health_score=analysis.health_score,
         calories_edited=edited,
         eaten_at=eaten_at,
@@ -297,24 +329,39 @@ async def update_meal(
     if meal is None:
         raise not_found()
 
-    if payload.quantity is not None and payload.quantity != meal.quantity:
+    # Quantity and calories both rescale the macros, so they are resolved
+    # together against the original analysis — applying them in sequence would
+    # let a quantity change overwrite macros an edit had just corrected.
+    if payload.quantity is not None or payload.calories is not None:
         analysis = None
         if meal.analysis_id:
             analysis = await db.scalar(
                 select(FoodAnalysis).where(FoodAnalysis.id == meal.analysis_id)
             )
-        if analysis is not None:
-            q = payload.quantity
-            meal.quantity = q
-            meal.protein_g = analysis.protein_g_per_serving * q
-            meal.carbs_g = analysis.carbs_g_per_serving * q
-            meal.fat_g = analysis.fat_g_per_serving * q
-            if not meal.calories_edited:
-                meal.calories = analysis.calories_per_serving * q
 
-    if payload.calories is not None:
-        meal.calories = payload.calories
-        meal.calories_edited = True
+        if payload.quantity is not None:
+            meal.quantity = round(payload.quantity, 2)
+
+        if payload.calories is not None:
+            meal.calories = payload.calories
+            meal.calories_edited = True
+        elif analysis is not None and not meal.calories_edited:
+            # Quantity moved with no edit in play, so the AI figure still
+            # governs; an earlier edit is left standing on purpose.
+            meal.calories = round(analysis.calories_per_serving * meal.quantity)
+
+        # Without the analysis row (it is SET NULL on delete) there is nothing
+        # to rescale from, so the stored macros are left as they are.
+        if analysis is not None:
+            meal.protein_g, meal.carbs_g, meal.fat_g = _scaled_macros(
+                analysis,
+                _macro_scale(
+                    analysis,
+                    meal.quantity,
+                    meal.calories,
+                    edited=meal.calories_edited,
+                ),
+            )
 
     if payload.is_favorite is not None:
         meal.is_favorite = payload.is_favorite

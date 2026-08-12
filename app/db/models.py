@@ -382,9 +382,13 @@ class Meal(UUIDPrimaryKey, Timestamps, Base):
     meal_type: Mapped[MealType] = mapped_column(
         Enum(MealType, name="meal_type"), default=MealType.snack
     )
-    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    # Servings eaten, as a fraction of the portion in the photo: 0.5 means the
+    # user ate half the plate. Float rather than Numeric so the value survives
+    # both Postgres and the SQLite fallback without a decimal-conversion
+    # warning; the quarter steps the UI offers are exact in binary anyway.
+    quantity: Mapped[float] = mapped_column(Float, default=1.0)
 
-    # Totals, already multiplied by quantity.
+    # Totals, already multiplied by quantity and rounded to whole units.
     calories: Mapped[int] = mapped_column(Integer)
     protein_g: Mapped[int] = mapped_column(Integer)
     carbs_g: Mapped[int] = mapped_column(Integer)
