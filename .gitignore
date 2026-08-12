@@ -12,5 +12,10 @@ venv/
 .idea/
 .vscode/
 
+/docs
 planCalc.txt
 run.txt
+GUIDE.md
+
+/tests
+
