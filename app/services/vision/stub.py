@@ -24,6 +24,8 @@ _DISHES = [
     ("Grilled Salmon Plate", ["Salmon", "Asparagus", "Lemon", "Quinoa"]),
 ]
 
+_CONFIDENCE = ["low", "medium", "high"]
+
 
 class StubVisionProvider(VisionProvider):
     name = "stub"
@@ -58,6 +60,9 @@ class StubVisionProvider(VisionProvider):
             fat_g_per_serving=fat,
             health_score=3 + digest[20] % 8,
             health_score_max=10,
+            # Roughly food-like: most plated meals land between 150g and 650g.
+            estimated_portion_grams=150 + digest[21] % 500,
+            portion_confidence=_CONFIDENCE[digest[22] % len(_CONFIDENCE)],
             detected_items=items,
             model="stub",
         )

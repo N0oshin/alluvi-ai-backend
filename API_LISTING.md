@@ -276,6 +276,8 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 | `fatProgress` | float | 0..1 |
 | `healthScore` | integer |  |
 | `healthScoreMax` | integer | default 10 |
+| `estimatedPortionGrams` | integer \ | null | portion the estimate assumes |
+| `portionConfidence` | string | `low` \| `medium` \| `high` |
 | `imageUrl` | string \ | null |
 | `detectedItems` | array of `DetectedItemOut` |  |
 
@@ -290,7 +292,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 | Field | Type | Notes |
 | --- | --- | --- |
 | `analysisId` | UUID |  |
-| `quantity` | integer | default 1, 1–99 |
+| `quantity` | float | default 1.0, >0 and ≤99; 0.5 = half the portion |
 | `mealType` | string \ | null |
 | `caloriesOverride` | integer \ | null |
 | `isFavorite` | boolean | default `false` |
@@ -336,7 +338,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `quantity` | integer \ | null |
+| `quantity` | float \ | null | >0 and ≤99 |
 | `calories` | integer \ | null |
 | `isFavorite` | boolean \ | null |
 | `mealType` | string \ | null |

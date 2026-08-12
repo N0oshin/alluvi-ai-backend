@@ -67,6 +67,15 @@ class MealType(str, enum.Enum):
     snack = "snack"
 
 
+class PortionConfidence(str, enum.Enum):
+    """How well the photo pinned down the portion weight. Drives whether the
+    client shows the estimate quietly or asks the user to confirm it."""
+
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
 class WeightSource(str, enum.Enum):
     """Provenance matters: a Health-synced weight must be distinguishable
     from one the user typed on the Update button."""
@@ -333,6 +342,16 @@ class FoodAnalysis(UUIDPrimaryKey, Timestamps, Base):
     fat_g_per_serving: Mapped[int] = mapped_column(Integer)
     health_score: Mapped[int] = mapped_column(Integer, default=0)
     health_score_max: Mapped[int] = mapped_column(Integer, default=10)
+
+    # Nullable: rows written before portion estimation existed have no value,
+    # and a provider is not obliged to supply one.
+    estimated_portion_grams: Mapped[int | None] = mapped_column(
+        Integer, default=None
+    )
+    portion_confidence: Mapped[PortionConfidence] = mapped_column(
+        Enum(PortionConfidence, name="portion_confidence"),
+        default=PortionConfidence.medium,
+    )
 
     provider: Mapped[str] = mapped_column(String(40), default="stub")
     model: Mapped[str | None] = mapped_column(String(80), default=None)

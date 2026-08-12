@@ -46,6 +46,11 @@ class FoodAnalysisOut(CamelModel):
     fat_progress: float
     health_score: int
     health_score_max: int = 10
+    # The portion the estimate assumes. Shown so the user can check the one
+    # assumption that drives the calorie figure; `low` confidence is the
+    # client's cue to ask them to confirm rather than accept it silently.
+    estimated_portion_grams: int | None = None
+    portion_confidence: str = "medium"
     image_url: str | None = None
     detected_items: list[DetectedItemOut] = Field(default_factory=list)
 

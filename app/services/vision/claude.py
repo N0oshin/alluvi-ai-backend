@@ -42,6 +42,15 @@ Macros must be physically consistent with the calorie figure: protein and \
 carbohydrate are 4 kcal per gram, fat is 9 kcal per gram, and those three \
 should account for the calories you report, within about 10%.
 
+estimated_portion_grams is the total edible weight you assumed for that one \
+serving. State the assumption you actually used, so the user can correct it.
+
+portion_confidence is how well the photo pins that weight down. Judge the \
+photo, not the dish: a flat plate shot at an angle with a fork or hand for \
+scale is "high"; a typical overhead shot of a plated meal is "medium"; a bowl, \
+soup, stew, or anything whose depth you cannot see is "low". Say "low" when \
+you are unsure — an honest low is more useful than a confident guess.
+
 health_score rates overall nutritional quality out of 10: whole foods, fibre, \
 and a balanced macro split score high; ultra-processed, fried, and \
 sugar-dominant dishes score low.
@@ -75,6 +84,15 @@ _SCHEMA = {
             "type": "integer",
             "description": "Nutritional quality, 0-10.",
         },
+        "estimated_portion_grams": {
+            "type": "integer",
+            "description": "Total edible weight assumed for one serving.",
+        },
+        "portion_confidence": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+            "description": "How well the photo pins down the portion weight.",
+        },
         "detected_items": {
             "type": "array",
             "description": "Visible ingredients with their centre in the frame.",
@@ -104,12 +122,16 @@ _SCHEMA = {
         "carbs_g_per_serving",
         "fat_g_per_serving",
         "health_score",
+        "estimated_portion_grams",
+        "portion_confidence",
         "detected_items",
     ],
     "additionalProperties": False,
 }
 
 _SUPPORTED_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+_CONFIDENCE_LEVELS = {"low", "medium", "high"}
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -233,6 +255,17 @@ def _to_result(data: dict, *, model: str) -> FoodAnalysisResult:
         fat_g_per_serving=int(_clamp(int(data["fat_g_per_serving"]), 0, 500)),
         health_score=int(_clamp(int(data.get("health_score", 5)), 0, 10)),
         health_score_max=10,
+        estimated_portion_grams=int(
+            _clamp(int(data.get("estimated_portion_grams") or 0), 0, 5000)
+        )
+        or None,
+        # The schema constrains this to the three values, but a default here
+        # keeps the field safe if the schema is ever loosened.
+        portion_confidence=(
+            data.get("portion_confidence")
+            if data.get("portion_confidence") in _CONFIDENCE_LEVELS
+            else "medium"
+        ),
         detected_items=items,
         model=model,
     )

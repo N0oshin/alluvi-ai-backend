@@ -27,7 +27,6 @@ class DetectedItemResult:
 @dataclass(slots=True)
 class FoodAnalysisResult:
     """Per-serving nutrition for one photo.
-
     Per-serving, not per-meal: the client multiplies by the quantity stepper
     (`FoodResultCubit`), so returning pre-multiplied totals would double-count.
     """
@@ -39,6 +38,11 @@ class FoodAnalysisResult:
     fat_g_per_serving: int
     health_score: int
     health_score_max: int = 10
+    # Depth is invisible in a photo, so portion is where nearly all the error
+    # lives — showing it gives the user something they can actually check,
+    # and a low confidence is the cue to ask rather than guess silently.
+    estimated_portion_grams: int | None = None
+    portion_confidence: str = "medium"
     detected_items: list[DetectedItemResult] = field(default_factory=list)
     model: str | None = None
 

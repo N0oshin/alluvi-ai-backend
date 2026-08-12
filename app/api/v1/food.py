@@ -25,6 +25,7 @@ from app.db.models import (
     MealPhoto,
     MealType,
     NutritionPlan,
+    PortionConfidence,
 )
 from app.schemas.common import MessageResponse
 from app.schemas.food import (
@@ -140,6 +141,8 @@ async def analyze_food(
         fat_g_per_serving=result.fat_g_per_serving,
         health_score=result.health_score,
         health_score_max=result.health_score_max,
+        estimated_portion_grams=result.estimated_portion_grams,
+        portion_confidence=PortionConfidence(result.portion_confidence),
         provider=provider.name,
         model=result.model,
     )
@@ -175,6 +178,8 @@ async def analyze_food(
         fat_progress=_progress(result.fat_g_per_serving, plan.fats_g if plan else None),
         health_score=result.health_score,
         health_score_max=result.health_score_max,
+        estimated_portion_grams=result.estimated_portion_grams,
+        portion_confidence=result.portion_confidence,
         image_url=storage.url_for(photo.storage_key),
         detected_items=[
             DetectedItemOut(label=i.label, cx=i.cx, cy=i.cy)
