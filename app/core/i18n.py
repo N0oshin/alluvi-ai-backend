@@ -33,6 +33,10 @@ _MESSAGES: dict[str, dict[Lang, str]] = {
         Lang.EN: "We hit an unexpected problem. Please try again shortly.",
         Lang.AR: "واجهتنا مشكلة غير متوقعة. برجاء المحاولة بعد قليل.",
     },
+    "error.rate_limited": {
+        Lang.EN: "Too many attempts. Please wait a while and try again.",
+        Lang.AR: "محاولات كثيرة جدًا. برجاء الانتظار قليلًا ثم المحاولة مرة أخرى.",
+    },
     "error.validation": {
         Lang.EN: "Some of the information you entered isn't valid.",
         Lang.AR: "بعض البيانات التي أدخلتها غير صالحة.",
@@ -73,6 +77,14 @@ _MESSAGES: dict[str, dict[Lang, str]] = {
     "auth.email_failed": {
         Lang.EN: "We couldn't send that email. Please try again shortly.",
         Lang.AR: "لم نتمكن من إرسال البريد الإلكتروني. برجاء المحاولة بعد قليل.",
+    },
+    "auth.social_invalid": {
+        Lang.EN: "We couldn't verify your sign-in. Please try again.",
+        Lang.AR: "لم نتمكن من التحقق من تسجيل دخولك. برجاء المحاولة مرة أخرى.",
+    },
+    "auth.social_unavailable": {
+        Lang.EN: "Sign-in with this provider isn't available right now. Please try again shortly.",
+        Lang.AR: "تسجيل الدخول عبر هذا المزود غير متاح حاليًا. برجاء المحاولة بعد قليل.",
     },
     "auth.reset_invalid": {
         Lang.EN: "This reset link is no longer valid. Request a new one.",
