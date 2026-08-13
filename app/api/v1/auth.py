@@ -15,13 +15,22 @@ import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, status
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.deps import CurrentUser, Db
 from app.core.errors import AppError
+from app.core.ratelimit import (
+    client_ip,
+    enforce,
+    forgot_by_email,
+    forgot_by_ip,
+    login_by_email,
+    login_by_ip,
+    signup_by_ip,
+)
 from app.core.timeutil import ensure_utc
 from app.core.security import (
     create_access_token,
@@ -65,6 +74,7 @@ from app.services.email import (
     password_reset_email,
     verification_email,
 )
+from app.services.social import verify_identity_token
 from app.services.storage.local import get_storage
 
 logger = logging.getLogger(__name__)
@@ -216,7 +226,12 @@ async def _bootstrap_user_rows(db: Db, user: User) -> None:
 
 
 @router.post("/SignUp", response_model=SignUpResponse, status_code=201)
-async def sign_up(payload: SignUpRequest, db: Db) -> SignUpResponse:
+async def sign_up(
+    payload: SignUpRequest, db: Db, request: Request
+) -> SignUpResponse:
+    # Rate-limited per IP: every successful sign-up sends an email, and a
+    # loop over throwaway addresses burns sending reputation, not just rows.
+    enforce(signup_by_ip, client_ip(request))
     _ensure_password_policy(payload.password)
 
     email = payload.email.lower()
@@ -256,7 +271,12 @@ async def sign_up(payload: SignUpRequest, db: Db) -> SignUpResponse:
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, db: Db) -> TokenResponse:
+async def login(payload: LoginRequest, db: Db, request: Request) -> TokenResponse:
+    # Both keys, before touching the database: per-email caps a targeted
+    # attack on one account, per-IP caps one machine spraying many accounts.
+    enforce(login_by_ip, client_ip(request))
+    enforce(login_by_email, payload.email.lower())
+
     user = await db.scalar(select(User).where(User.email == payload.email.lower()))
 
     # Same error for "no such user" and "wrong password" — never confirm
@@ -355,8 +375,15 @@ async def resend_code(payload: ResendCodeRequest, db: Db) -> MessageResponse:
 
 
 @router.post("/forgotPassword", response_model=MessageResponse)
-async def forgot_password(payload: ForgotPasswordRequest, db: Db) -> MessageResponse:
+async def forgot_password(
+    payload: ForgotPasswordRequest, db: Db, request: Request
+) -> MessageResponse:
     """Emails a reset **link**, not a code (Figma screen 16)."""
+    # Limited even for unknown addresses — the response never reveals whether
+    # the email exists, and neither should the rate limiter's behaviour.
+    enforce(forgot_by_ip, client_ip(request))
+    enforce(forgot_by_email, payload.email.lower())
+
     user = await db.scalar(select(User).where(User.email == payload.email.lower()))
     generic = MessageResponse(
         message="If that email is registered, a reset link is on its way."
@@ -483,19 +510,14 @@ async def google_sign_in(payload: SocialAuthRequest, db: Db) -> TokenResponse:
 
 
 async def _verify_social_token(token: str, provider: AuthProvider) -> dict[str, str]:
-    """Validate an Apple/Google identity token.
+    """Validate an Apple/Google identity token against the provider's JWKS.
 
-    NOT IMPLEMENTED — this must verify the JWT signature against the
-    provider's published JWKS and check `iss`, `aud`, and `exp` before any
-    session is issued. Until then social sign-in is refused rather than
-    trusted, because accepting an unverified token would let anyone sign in
-    as anyone.
+    Signature, expiry, issuer, and audience are all checked in
+    `app.services.social`. Answers 501 while the provider's audience
+    (client ID / bundle ID) is not configured — refusal stays the default
+    rather than trust.
     """
-    raise AppError(
-        "error.generic",
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        code="SOCIAL_AUTH_NOT_CONFIGURED",
-    )
+    return await verify_identity_token(token, provider)
 
 
 # --------------------------------------------------------------------------

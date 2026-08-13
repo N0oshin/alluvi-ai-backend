@@ -3,6 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,6 +33,19 @@ class Settings(BaseSettings):
     OTP_TTL_MINUTES: int = 10
     OTP_MAX_ATTEMPTS: int = 5
     OTP_RESEND_COOLDOWN_SECONDS: int = 60
+
+    # --- rate limiting ---
+    # In-process sliding windows (see app/core/ratelimit.py). Off in tests,
+    # which hammer the auth endpoints from a single "client".
+    RATE_LIMIT_ENABLED: bool = True
+
+    # --- social sign-in ---
+    # Comma-separated because one Google project issues a different OAuth
+    # client ID per platform (Android / iOS / web), and the token's `aud` is
+    # whichever the app used. Unset means the provider's endpoint answers 501.
+    GOOGLE_CLIENT_IDS: str | None = None
+    # The iOS bundle ID (plus a Services ID if web sign-in is ever added).
+    APPLE_BUNDLE_IDS: str | None = None
 
     # --- vision provider ---
     # "stub"   -> deterministic fake analysis, no API key, used by tests
@@ -63,6 +77,16 @@ class Settings(BaseSettings):
     # dropped in the process (phone photos carry GPS).
     PHOTO_MAX_EDGE_PX: int = 1568
     PHOTO_JPEG_QUALITY: int = 85
+
+    @model_validator(mode="after")
+    def _refuse_placeholder_secret_outside_debug(self) -> "Settings":
+        if not self.DEBUG and self.JWT_SECRET == "change-in-production":
+            raise ValueError(
+                "JWT_SECRET is still the placeholder. Set a real secret "
+                '(python -c "import secrets; print(secrets.token_urlsafe(48))") '
+                "or set DEBUG=true for local development."
+            )
+        return self
 
 
 @lru_cache
