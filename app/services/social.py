@@ -115,9 +115,7 @@ async def _signing_key(meta: _ProviderMeta, kid: str) -> dict[str, Any]:
     return key
 
 
-async def verify_identity_token(
-    token: str, provider: AuthProvider
-) -> dict[str, str]:
+async def verify_identity_token(token: str, provider: AuthProvider) -> dict[str, str]:
     """Returns `{"sub": ..., "email": ...}` for a genuine token, else raises.
 
     Raises 501 when the provider's audience is not configured, 401 for any

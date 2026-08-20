@@ -128,11 +128,11 @@ that, every re-sync double-counts. Weight entries also record provenance
 
 ## Not implemented
 
-- **Apple / Google sign-in** — `Auth/apple` and `Auth/google` return `501`. The
-  identity token must be verified against the provider's JWKS (signature,
-  `iss`, `aud`, `exp`) before a session is issued; accepting an unverified
-  token would let anyone sign in as anyone. The endpoints refuse rather than
-  trust.
+- **Google sign-in** — verification is implemented, but `Auth/google` answers
+  `501` until `GOOGLE_CLIENT_IDS` is set. The token's `aud` is checked against
+  that list, so with no configured audience there is nothing to check it
+  against; the endpoint refuses rather than trusts. Apple is configured
+  (`APPLE_BUNDLE_IDS=com.alluvi.alluvi`) and live.
 - **Object storage** — photos go to local disk under `MEDIA_ROOT`. Implement
   `StorageBackend` for S3/GCS and serve time-limited pre-signed URLs.
 - **Achievement unlocking** — the catalogue is seeded and the endpoint reports
