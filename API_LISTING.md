@@ -4,9 +4,79 @@ All routes below are mounted under the `/api` prefix (`settings.API_V1_PREFIX`),
 
 Every request/response model inherits `CamelModel`, so **all JSON field names are camelCase on the wire**. The names in this document are the wire names.
 
-Auth is `Authorization: Bearer <accessToken>`. "Auth" column: **Yes** = requires a valid access token.
+Auth is `Authorization: Bearer <accessToken>`. "Auth" column: **Yes** = requires a valid access token. The access token is short-lived (15 minutes by default); the refresh token lasts 30 days. See `POST /api/Auth/refresh`.
 
-Error responses share one envelope from `app/core/errors.py` and are not repeated per endpoint.
+Error responses share one envelope — see [Errors](#errors) below — and are not repeated per endpoint.
+
+## Headers
+
+| Header | Applies to | Notes |
+| --- | --- | --- |
+| `Authorization` | endpoints marked Auth: **Yes** | `Bearer <accessToken>` |
+| `langCode` | every endpoint | `1` selects Arabic. Any other value, or the header being absent, selects English. This is **not** `Accept-Language` — that header is ignored. It controls error `detail` text, the BMI category label in `/api/analytics`, and which language `/api/legal/*` returns |
+
+## Resolving `imageUrl`
+
+`imageUrl` values (on `MealOut`, `FavoriteOut`, `FoodAnalysisOut`) are **relative paths** while the server runs on local storage, e.g. `/media/abc123.jpg`. Prefix them with the API base URL to load the image.
+
+In production these become absolute pre-signed object-storage URLs. Clients must therefore handle both: if the value starts with `http`, use it as-is; otherwise prefix the base URL.
+
+---
+
+## Errors
+
+**Every** non-2xx response — validation failures, auth failures, rate limits, unhandled server errors — is a JSON object with a `detail` string, plus an optional machine-readable `code`:
+
+```json
+{ "detail": "Too many attempts. Please wait a while and try again.", "code": "RATE_LIMITED" }
+```
+
+- `detail` is **always a plain string**, never a list or an object, and is localised via the `langCode` header. It is safe to display to the user directly.
+- `code` is the stable identifier to branch on. Do **not** branch on `detail` text (it is translated) or on the HTTP status alone (several codes share a status).
+- `code` is absent on a small number of generic framework errors (e.g. a 404 from an unknown URL). Treat a missing `code` as an unclassified error.
+
+> **Note for client codegen:** `openapi.json` advertises 422 responses as `HTTPValidationError`, whose `detail` is an *array*. That is FastAPI's default schema and it does **not** match what this API returns — the handler flattens validation errors to a single string, as above. If you generate a client from the spec, replace the generated error model with the envelope shown here.
+
+### Error codes
+
+| Code | HTTP | Where | Meaning |
+| --- | --- | --- | --- |
+| `VALIDATION_ERROR` | 422 | any | Request body/query failed schema validation. `detail` names the first bad field, e.g. `"email: value is not a valid email address"` |
+| `INTERNAL_ERROR` | 500 | any | Unhandled server error |
+| `RATE_LIMITED` | 429 | SignUp, login, forgotPassword | Too many attempts — see [Rate limits](#rate-limits) |
+| `INVALID_TOKEN` | 401 | any Auth: **Yes** | Access token missing, malformed, or expired → refresh, then retry |
+| `NOT_FOUND` | 404 | any Auth: **Yes** | Resource does not exist, or belongs to another user. Ownership failures are deliberately 404, not 403 |
+| `WEAK_PASSWORD` | 422 | SignUp, resetPassword | Password fails policy: 8+ chars with at least one number and one symbol |
+| `EMAIL_TAKEN` | 409 | SignUp, personalDetails | Address already registered |
+| `INVALID_CREDENTIALS` | 401 | login | Wrong email *or* wrong password — deliberately indistinguishable |
+| `EMAIL_NOT_VERIFIED` | 409 | login | Address not yet verified. A fresh code has been sent; route the user to the code screen. 409 not 403 so the client does not wipe the session |
+| `OTP_INVALID` | 400 | verifyCode | Wrong code, or no outstanding code |
+| `OTP_EXPIRED` | 400 | verifyCode | Code expired, or too many wrong attempts — request a new one |
+| `OTP_COOLDOWN` | 429 | resendCode | A code was already sent within the cooldown window (60s default) |
+| `RESET_INVALID` | 400 | resetPassword | Reset token invalid, expired, or already used |
+| `INVALID_REFRESH` | 401 | refresh | Refresh token unknown or malformed → log the user out |
+| `REFRESH_EXPIRED` | 401 | refresh | Refresh token past its 30-day life → log the user out |
+| `REFRESH_REUSED` | 401 | refresh | A consumed token was replayed. **The whole token family is revoked** → log the user out |
+| `EMAIL_FAILED` | 502 | SignUp, forgotPassword | The email provider rejected the message. Nothing was persisted — the user may retry |
+| `NO_IMAGE` | 400 | food/analyze | No file in the `image` part |
+| `IMAGE_TOO_LARGE` | 413 | food/analyze | Over 15 MB |
+| `BAD_IMAGE` | 400 | food/analyze | Not a decodable image |
+| `ANALYSIS_FAILED` | 400 | food/analyze | The vision provider could not analyse the photo |
+| `NO_PLAN` | 404 | userinfo/plan, nutritionGoals | Onboarding has not run — send the user to `POST /api/userinfo/plan` |
+| `SOCIAL_AUTH_NOT_CONFIGURED` | 501 | Auth/apple, Auth/google | Server has no client ID / bundle ID configured for that provider |
+| `SOCIAL_AUTH_INVALID` | 401 | Auth/apple, Auth/google | Identity token failed signature, expiry, issuer, or audience checks |
+| `SOCIAL_AUTH_UNAVAILABLE` | 502 | Auth/apple, Auth/google | Could not reach the provider's JWKS endpoint — transient, retry |
+
+## Rate limits
+
+Exceeding any of these returns 429 with code `RATE_LIMITED`. There is **no `Retry-After` header**, so the client must apply its own backoff.
+
+| Endpoint | Limit |
+| --- | --- |
+| `POST /api/Auth/login` | 10 per 15 min per email, and 30 per 15 min per IP |
+| `POST /api/Auth/SignUp` | 10 per hour per IP |
+| `POST /api/Auth/forgotPassword` | 3 per hour per email, and 10 per hour per IP |
+| `POST /api/Auth/resendCode` | 1 per 60s per account (returns `OTP_COOLDOWN`, not `RATE_LIMITED`) |
 
 ---
 
@@ -45,7 +115,9 @@ Also mounted: `GET /media/{path}` — static files (meal photos), `GET /docs`, `
 | `email` | string |
 | `verificationRequired` | boolean (default `true`) |
 
-No session is issued — the emailed 6-digit code must be verified first.
+No session is issued — the emailed 6-digit code must be verified first via `POST /api/Auth/verifyCode`.
+
+429 `RATE_LIMITED` after 10 sign-ups per hour from one IP. If the verification email cannot be sent the whole sign-up is rolled back and answered 502 `EMAIL_FAILED` — no account is created, so the user can safely retry the same address.
 
 ---
 
@@ -70,7 +142,7 @@ No session is issued — the emailed 6-digit code must be verified first.
 | `isNewUser` | boolean | default `false` |
 | `emailVerified` | boolean | default `true` |
 
-Returns 409 `EMAIL_NOT_VERIFIED` (and re-sends a code) if the address is unverified.
+Returns 409 `EMAIL_NOT_VERIFIED` (and re-sends a code) if the address is unverified, 401 `INVALID_CREDENTIALS` for a bad email or password, and 429 `RATE_LIMITED` after 10 attempts per 15 min on one email or 30 from one IP.
 
 ---
 
@@ -115,6 +187,8 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 
 **Response** — `MessageResponse` (`message`: string). Emails a reset **link**, not a code.
 
+The reply is generic whether or not the address exists — never surface it as confirmation that an account was found. 429 `RATE_LIMITED` after 3 requests per hour for one address, or 10 per hour from one IP.
+
 ---
 
 ### POST `/api/Auth/resetPassword` → 200 · Auth: No
@@ -137,12 +211,16 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `identityToken` | string | provider identity JWT |
-| `name` | string \ | null |
+| `identityToken` | string | the provider's identity JWT, straight from the Apple/Google SDK |
+| `name` | string \| null | Apple returns the user's name **only on first sign-in** — send it when you have it, or the account is created with an empty name |
 
 **Response** — `TokenResponse` (see above)
 
-> Currently always returns 501 `SOCIAL_AUTH_NOT_CONFIGURED` — token verification is not implemented.
+The token is verified server-side against the provider's JWKS: signature, expiry, issuer, and audience are all checked. The email is taken from the verified token, never from the client, and arrives already verified — no code screen follows a social sign-in.
+
+**`isNewUser` matters here.** `true` means a brand-new account was created and the client should route into onboarding (`POST /api/userinfo/plan`); `false` means an existing account, including the case where a social identity was linked onto an account that had signed up with the same address by email + password.
+
+Server configuration: these endpoints answer 501 `SOCIAL_AUTH_NOT_CONFIGURED` until `GOOGLE_CLIENT_IDS` / `APPLE_BUNDLE_IDS` are set on the server, since the audience being checked is the app's own identifier. Both accept a comma-separated list, so an iOS bundle ID and an Android client ID can be accepted at once. Confirm with the backend that these are set for your environment before integrating.
 
 ---
 
@@ -186,13 +264,13 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `gender` | string \ | null |
-| `activityLevel` | string \ | null |
+| `gender` | string \| null |
+| `activityLevel` | string \| null |
 | `heightCm` | float | default 170, 50 < x < 280 |
 | `weightKg` | float | default 65, 20 < x < 500 |
-| `goal` | string \ | null |
+| `goal` | string \| null |
 | `desiredWeightKg` | float | default 58, 20 < x < 500 |
-| `birthday` | date \ | null |
+| `birthday` | date \| null |
 
 **Response** — `PlanOut`
 
@@ -203,7 +281,7 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 | `carbsG` | integer |
 | `fatsG` | integer |
 | `weightDeltaKg` | float |
-| `targetDate` | date \ |
+| `targetDate` | date \| null |
 | `planVersion` | integer |
 | `isOverride` | boolean |
 | `computedAt` | datetime |
@@ -277,10 +355,10 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 | `fatProgress` | float | 0..1 |
 | `healthScore` | integer |  |
 | `healthScoreMax` | integer | default 10 |
-| `estimatedPortionGrams` | integer \ | null | portion the estimate assumes |
+| `estimatedPortionGrams` | integer \| null | portion the estimate assumes |
 | `portionConfidence` | string | `low` \| `medium` \| `high` |
-| `scaleReference` | string \ | null | known-size object the portion was calibrated against, e.g. `"fork"`; `null` = none visible |
-| `imageUrl` | string \ | null |
+| `scaleReference` | string \| null | known-size object the portion was calibrated against, e.g. `"fork"`; `null` = none visible |
+| `imageUrl` | string \| null |
 | `detectedItems` | array of `DetectedItemOut` |  |
 
 `DetectedItemOut`: `label` (string), `cx` (float), `cy` (float).
@@ -295,10 +373,10 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 | --- | --- | --- |
 | `analysisId` | UUID |  |
 | `quantity` | float | default 1.0, >0 and ≤99; 0.5 = half the portion |
-| `mealType` | string \ | null |
-| `caloriesOverride` | integer \ | null |
+| `mealType` | string \| null |
+| `caloriesOverride` | integer \| null |
 | `isFavorite` | boolean | default `false` |
-| `eatenAt` | datetime \ | null |
+| `eatenAt` | datetime \| null |
 
 **Response** — `MealOut`
 
@@ -325,33 +403,33 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 
 | Param | Type | Notes |
 | --- | --- | --- |
-| `day` | date \ | null |
+| `day` | date \| null |
 | `limit` | integer | default 50, 1–200 |
 
 **Response** — array of `MealOut` (see above)
 
 ---
 
-### PATCH `/api/meals/{mealId}` → 200 · Auth: **Yes**
+### PATCH `/api/meals/{meal_id}` → 200 · Auth: **Yes**
 
-**Path** — `mealId` (UUID)
+**Path** — `meal_id` (UUID)
 
 **Request** — `UpdateMealRequest`
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `quantity` | float \ | null | >0 and ≤99 |
-| `calories` | integer \ | null |
-| `isFavorite` | boolean \ | null |
-| `mealType` | string \ | null |
+| `quantity` | float \| null | >0 and ≤99 |
+| `calories` | integer \| null |
+| `isFavorite` | boolean \| null |
+| `mealType` | string \| null |
 
 **Response** — `MealOut` (see above)
 
 ---
 
-### DELETE `/api/meals/{mealId}` → 200 · Auth: **Yes**
+### DELETE `/api/meals/{meal_id}` → 200 · Auth: **Yes**
 
-**Path** — `mealId` (UUID). **Request** — none.
+**Path** — `meal_id` (UUID). **Request** — none.
 
 **Response** — `MessageResponse` (`message`: string). Deletes the associated photo too.
 
@@ -410,14 +488,14 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 | `kcal` | integer |
 | `mealType` | string |
 | `tag` | string |
-| `imageUrl` | string \ |
+| `imageUrl` | string \| null |
 | `isFavorite` | boolean |
 
 ---
 
-### POST `/api/favorites/{mealId}/toggle` → 200 · Auth: **Yes**
+### POST `/api/favorites/{meal_id}/toggle` → 200 · Auth: **Yes**
 
-**Path** — `mealId` (UUID). **Request** — none.
+**Path** — `meal_id` (UUID). **Request** — none.
 
 **Response** — `FavoriteOut` (see above)
 
@@ -431,16 +509,16 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 
 | Param | Type | Notes |
 | --- | --- | --- |
-| `range` | string | default `90d`; one of `90d` \ |
+| `range` | string | default `90d`; one of `90d` \| `6m` \| `1y` \| `all` |
 
-Also reads the `Accept-Language` header for the localised BMI category label.
+Also reads the `langCode` header for the localised BMI category label (`categoryKey` is the stable, unlocalised form — branch on that, display `category`).
 
 **Response** — `AnalyticsOut`
 
 | Field | Type |
 | --- | --- |
 | `goalProgress` | `GoalProgressOut` |
-| `currentBmi` | `BmiOut` \ |
+| `currentBmi` | `BmiOut` \| null |
 | `streak` | `StreakOut` |
 | `caloriesThisWeek` | array of `DayCaloriesOut` |
 
@@ -469,7 +547,7 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 | `calorieGoal` | integer |
 | `streakDays` | integer |
 | `appleHealthConnected` | boolean |
-| `lastSyncedAt` | datetime \ |
+| `lastSyncedAt` | datetime \| null |
 
 ---
 
@@ -482,11 +560,11 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 | Field | Type |
 | --- | --- |
 | `displayName` | string |
-| `goal` | string \ |
+| `goal` | string \| null |
 | `goalLabel` | string |
-| `currentWeightKg` | float \ |
-| `goalWeightKg` | float \ |
-| `dailyCalories` | integer \ |
+| `currentWeightKg` | float \| null |
+| `goalWeightKg` | float \| null |
+| `dailyCalories` | integer \| null |
 
 ---
 
@@ -502,7 +580,7 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 | `email` | string |
 | `gender` | string |
 | `heightCm` | float |
-| `birthday` | date \ |
+| `birthday` | date \| null |
 | `emailVerificationRequired` | boolean (default `false`) |
 
 ---
@@ -513,11 +591,11 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `name` | string \ | null |
-| `email` | string (email) \ | null |
-| `gender` | string \ | null |
-| `heightCm` | float \ | null |
-| `birthday` | date \ | null |
+| `name` | string \| null |
+| `email` | string (email) \| null |
+| `gender` | string \| null |
+| `heightCm` | float \| null |
+| `birthday` | date \| null |
 
 **Response** — `PersonalDetailsOut` (see above). 409 `EMAIL_TAKEN` on a clash.
 
@@ -535,7 +613,7 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 | `currentWeightKg` | float |  |
 | `goalWeightKg` | float |  |
 | `estimatedGoalDate` | string | pre-formatted, e.g. `"Est. Sep 14"` |
-| `targetDate` | date \ | null |
+| `targetDate` | date \| null |
 
 ---
 
@@ -545,8 +623,8 @@ Also reads the `Accept-Language` header for the localised BMI category label.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `currentWeightKg` | float \ | null |
-| `goalWeightKg` | float \ | null |
+| `currentWeightKg` | float \| null |
+| `goalWeightKg` | float \| null |
 
 **Response** — `CurrentWeightOut` (see above). Triggers a plan recalculation.
 
@@ -677,7 +755,7 @@ Static copy — no referral reward is tracked or granted.
 ### GET `/api/legal/terms` → 200 · Auth: No
 ### GET `/api/legal/privacy` → 200 · Auth: No
 
-**Request** — none. Reads `Accept-Language` to pick the language, falling back to `en`.
+**Request** — none. Reads the `langCode` header to pick the language, falling back to `en`.
 
 **Response** — `LegalDocumentOut`
 

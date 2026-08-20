@@ -45,6 +45,30 @@ DATABASE_URL="sqlite+aiosqlite:///./dev.db" ./.venv/Scripts/python.exe run.py
 
 Migrations run on both backends (Alembic uses batch mode on SQLite).
 
+### Supabase (hosted Postgres)
+
+Point `DATABASE_URL` at the project's **session pooler** and run the same
+`alembic upgrade head` / `app.db.seed` pair as above. Three things bite here:
+
+| Trap | Fix |
+| --- | --- |
+| `db.<ref>.supabase.co` is IPv6-only, so it fails with `getaddrinfo failed` on IPv4-only networks | use `aws-0-<region>.pooler.supabase.com:5432` (Connection string -> Session pooler in the dashboard) |
+| the pooler rejects the plain `postgres` user | the user is `postgres.<project-ref>` |
+| Supabase's copy button gives a bare `postgresql://` URL | SQLAlchemy needs the driver tag: `postgresql+psycopg://` |
+
+```
+DATABASE_URL=postgresql+psycopg://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
+```
+
+Revision `614f47603235` closes the `public` schema to the `anon` and
+`authenticated` roles. Supabase otherwise publishes every table in `public`
+over HTTP via PostgREST with CRUD granted to `anon` -- and the anon key ships
+inside the Flutter client, so without it `users`, `refresh_tokens` and
+`otp_codes` are readable by anyone holding it. Authorization for this app
+lives in FastAPI, which connects as the table owner `postgres` and therefore
+bypasses RLS, so the lockdown costs the backend nothing. The revision no-ops
+on local Postgres and SQLite, where those roles do not exist.
+
 
 ## Food analysis providers
 
