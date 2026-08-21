@@ -606,7 +606,9 @@ async def delete_account(user: CurrentUser, db: Db) -> MessageResponse:
     every child table cascades.
     """
     await _revoke_all_for_user(db, user.id)
-    await get_storage().delete_prefix(f"meals/{user.id}")
+    storage = get_storage()
+    await storage.delete_prefix(f"meals/{user.id}")
+    await storage.delete_prefix(f"avatars/{user.id}")
     await db.delete(user)
     await db.flush()
     return MessageResponse(message="Your account has been deleted.")

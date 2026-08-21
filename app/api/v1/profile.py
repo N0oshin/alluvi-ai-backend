@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, date, datetime, timedelta
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, File, Query, UploadFile, status
 from sqlalchemy import func, select
 
 from app.core.deps import CurrentUser, Db, LangDep, not_found
@@ -24,8 +25,10 @@ from app.db.models import (
     WeightSource,
 )
 from app.api.v1.auth import _issue_otp
+from app.api.v1.food import MAX_UPLOAD_BYTES
 from app.api.v1.userinfo import active_plan, recalculate_plan
 from app.services.achievements import on_weight_logged
+from app.services.storage.local import build_avatar_key, get_storage, process_photo
 from app.schemas.common import MessageResponse
 from app.schemas.profile import (
     AchievementOut,
@@ -42,6 +45,7 @@ from app.schemas.profile import (
     PersonalDetailsOut,
     PersonalDetailsUpdate,
     ProfileOut,
+    ProfilePhotoOut,
     ProfileSummaryOut,
     RingColorOut,
     WeightEntryOut,
@@ -49,6 +53,10 @@ from app.schemas.profile import (
 )
 
 router = APIRouter(prefix="/profile", tags=["profile"])
+
+
+def _avatar_url(user: User) -> str | None:
+    return get_storage().url_for(user.avatar_key) if user.avatar_key else None
 
 
 async def _latest_weight(db: Db, user_id) -> WeightEntry | None:
@@ -124,6 +132,7 @@ async def get_profile(user: CurrentUser, db: Db) -> ProfileOut:
         streak_days=await compute_streak(db, user.id),
         apple_health_connected=user.apple_health_connected,
         last_synced_at=user.last_synced_at,
+        avatar_url=_avatar_url(user),
     )
 
 
@@ -160,6 +169,7 @@ async def get_personal_details(user: CurrentUser) -> PersonalDetailsOut:
         gender=(user.gender.value if user.gender else "other"),
         height_cm=user.height_cm or 170.0,
         birthday=user.birthday,
+        avatar_url=_avatar_url(user),
     )
 
 
@@ -212,8 +222,61 @@ async def update_personal_details(
         gender=(user.gender.value if user.gender else "other"),
         height_cm=user.height_cm or 170.0,
         birthday=user.birthday,
+        avatar_url=_avatar_url(user),
         email_verification_required=verification_required,
     )
+
+
+# --------------------------------------------------------------------------
+# Profile photo (optional avatar)
+# --------------------------------------------------------------------------
+
+
+@router.post("/photo", response_model=ProfilePhotoOut)
+async def upload_profile_photo(
+    user: CurrentUser, db: Db, image: UploadFile = File(...)
+) -> ProfilePhotoOut:
+    raw = await image.read()
+    if not raw:
+        raise AppError("profile.no_photo", code="NO_IMAGE")
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise AppError(
+            "profile.photo_too_large",
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            code="IMAGE_TOO_LARGE",
+        )
+
+    # Same pipeline as meal photos: downscale + re-encode, which strips
+    # EXIF/GPS before the file ever touches disk.
+    try:
+        processed, _width, _height = process_photo(raw)
+    except ValueError:
+        raise AppError("profile.bad_photo", code="BAD_IMAGE") from None
+
+    old_key = user.avatar_key
+    new_key = build_avatar_key(user.id, uuid.uuid4())
+
+    storage = get_storage()
+    await storage.save(processed, key=new_key, mime_type="image/jpeg")
+    user.avatar_key = new_key
+    await db.flush()
+
+    # Only after the new photo is saved and the row points at it — a failure
+    # above must never leave the user with a dangling key.
+    if old_key:
+        await storage.delete(old_key)
+
+    return ProfilePhotoOut(avatar_url=_avatar_url(user))
+
+
+@router.delete("/photo", response_model=ProfilePhotoOut)
+async def delete_profile_photo(user: CurrentUser, db: Db) -> ProfilePhotoOut:
+    # Idempotent: removing an absent photo is still a success.
+    if user.avatar_key:
+        await get_storage().delete(user.avatar_key)
+        user.avatar_key = None
+        await db.flush()
+    return ProfilePhotoOut(avatar_url=None)
 
 
 # --------------------------------------------------------------------------

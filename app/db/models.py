@@ -119,6 +119,10 @@ class User(UUIDPrimaryKey, Timestamps, Base):
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Storage key (`avatars/{userId}/{photoId}.jpg`), not a URL, so the media
+    # host can change without a data migration. Null = no photo (optional).
+    avatar_key: Mapped[str | None] = mapped_column(String(255), default=None)
+
     # Personal details (screen 21-26 / PersonalDetailsModel)
     gender: Mapped[Gender | None] = mapped_column(
         Enum(Gender, name="gender"), default=None

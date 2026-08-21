@@ -99,6 +99,12 @@ def build_key(user_id: uuid.UUID, photo_id: uuid.UUID) -> str:
     return f"meals/{user_id}/{photo_id}.jpg"
 
 
+def build_avatar_key(user_id: uuid.UUID, photo_id: uuid.UUID) -> str:
+    """`avatars/{userId}/{photoId}.jpg` — a fresh id per upload, so the URL
+    changes on replace and client-side image caches never show a stale photo."""
+    return f"avatars/{user_id}/{photo_id}.jpg"
+
+
 _backend: StorageBackend | None = None
 
 
@@ -109,4 +115,11 @@ def get_storage() -> StorageBackend:
     return _backend
 
 
-__all__ = ["LocalStorageBackend", "StoredPhoto", "build_key", "get_storage", "process_photo"]
+__all__ = [
+    "LocalStorageBackend",
+    "StoredPhoto",
+    "build_avatar_key",
+    "build_key",
+    "get_storage",
+    "process_photo",
+]

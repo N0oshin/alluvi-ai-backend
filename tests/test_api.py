@@ -736,3 +736,48 @@ async def test_editing_other_fields_leaves_verification_alone(
     async with session_factory() as db:
         user = await db.scalar(select(User).where(User.name == "Renamed"))
         assert user.email_verified is True
+
+
+# --------------------------------------------------------------------------
+# Profile photo
+# --------------------------------------------------------------------------
+
+
+async def test_profile_photo_upload_replace_and_delete(auth_client):
+    # Optional: absent by default everywhere it is surfaced.
+    profile = (await auth_client.get("/api/profile")).json()
+    assert profile["avatarUrl"] is None
+
+    resp = await auth_client.post(
+        "/api/profile/photo",
+        files={"image": ("me.png", _png_bytes(), "image/png")},
+    )
+    assert resp.status_code == 200, resp.text
+    first_url = resp.json()["avatarUrl"]
+    assert first_url and first_url.endswith(".jpg")
+
+    details = (await auth_client.get("/api/profile/personalDetails")).json()
+    assert details["avatarUrl"] == first_url
+
+    # Replacing issues a fresh URL so client image caches can't go stale.
+    resp = await auth_client.post(
+        "/api/profile/photo",
+        files={"image": ("me2.png", _png_bytes((5, 5, 5)), "image/png")},
+    )
+    second_url = resp.json()["avatarUrl"]
+    assert second_url != first_url
+
+    resp = await auth_client.delete("/api/profile/photo")
+    assert resp.status_code == 200
+    assert resp.json()["avatarUrl"] is None
+    # Idempotent: deleting again is still a success.
+    assert (await auth_client.delete("/api/profile/photo")).status_code == 200
+
+
+async def test_profile_photo_rejects_garbage(auth_client):
+    resp = await auth_client.post(
+        "/api/profile/photo",
+        files={"image": ("x.jpg", b"not an image", "image/jpeg")},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "BAD_IMAGE"

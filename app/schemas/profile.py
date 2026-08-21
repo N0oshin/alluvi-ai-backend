@@ -78,6 +78,8 @@ class ProfileOut(CamelModel):
     streak_days: int
     apple_health_connected: bool
     last_synced_at: datetime | None
+    # Absolute-path URL under the media mount; null when no photo is set.
+    avatar_url: str | None = None
 
 
 class ProfileSummaryOut(CamelModel):
@@ -98,9 +100,16 @@ class PersonalDetailsOut(CamelModel):
     gender: str
     height_cm: float
     birthday: date | None
+    avatar_url: str | None = None
     # True when the address just changed: a code has been emailed to it, and
     # the account stays locked out of login until `Auth/verifyCode` runs.
     email_verification_required: bool = False
+
+
+class ProfilePhotoOut(CamelModel):
+    """Result of uploading or removing the profile photo. Null after removal."""
+
+    avatar_url: str | None
 
 
 class PersonalDetailsUpdate(CamelModel):

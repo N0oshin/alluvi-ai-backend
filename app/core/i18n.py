@@ -126,6 +126,18 @@ _MESSAGES: dict[str, dict[Lang, str]] = {
         Lang.EN: "Finish your onboarding to get your daily plan.",
         Lang.AR: "أكمل خطوات التسجيل للحصول على خطتك اليومية.",
     },
+    "profile.no_photo": {
+        Lang.EN: "Please attach a photo.",
+        Lang.AR: "برجاء إرفاق صورة.",
+    },
+    "profile.bad_photo": {
+        Lang.EN: "We couldn't read that image. Try choosing another photo.",
+        Lang.AR: "لم نتمكن من قراءة هذه الصورة. حاول اختيار صورة أخرى.",
+    },
+    "profile.photo_too_large": {
+        Lang.EN: "That photo is too large. Please try a smaller one.",
+        Lang.AR: "هذه الصورة كبيرة جدًا. برجاء تجربة صورة أصغر.",
+    },
 }
 
 
