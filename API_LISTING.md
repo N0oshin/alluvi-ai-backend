@@ -408,10 +408,13 @@ always empty on the other endpoints that return `MealOut`) — show the
 
 | Param | Type | Notes |
 | --- | --- | --- |
-| `day` | date \| null |
+| `day` | date \| null | omit for full history across all days |
 | `limit` | integer | default 50, 1–200 |
+| `offset` | integer | default 0, for paging the history |
 
-**Response** — array of `MealOut` (see above)
+**Response** — array of `MealOut` (see above), newest first. Backs the
+"See all" screen: with no `day` it pages through every meal the user has
+ever logged.
 
 ---
 
@@ -458,7 +461,7 @@ always empty on the other endpoints that return `MealOut`) — show the
 | `carbsGoal` | integer |  |
 | `fatLeft` | integer |  |
 | `fatGoal` | integer |  |
-| `meals` | array of `MealOut` |  |
+| `meals` | array of `MealOut` | latest 3 only — "See all" uses GET `/api/meals` |
 
 ---
 

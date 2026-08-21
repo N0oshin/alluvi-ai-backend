@@ -77,7 +77,7 @@ def _progress(value: float, goal: float | None) -> float:
 
 
 def _format_time(moment: datetime) -> str:
-    """"12:07" — 24h avoids the %-I directive, which is not portable to Windows."""
+    """ "12:07" — 24h avoids the %-I directive, which is not portable to Windows."""
     return moment.astimezone(UTC).strftime("%H:%M")
 
 
@@ -332,16 +332,21 @@ async def _meal_response(db: Db, meal: Meal) -> MealOut:
 async def list_meals(
     user: CurrentUser,
     db: Db,
-    day: date | None = Query(default=None, description="Defaults to today (UTC)."),
+    day: date | None = Query(
+        default=None, description="Omit for full history across all days."
+    ),
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> list[MealOut]:
-    target = day or datetime.now(UTC).date()
+    """Backs the "See all" screen: no `day` means every meal the user has
+    logged, newest first, paged via limit/offset. Pass `day` to scope to one
+    date (the pre-history behaviour, minus the implicit default of today)."""
+    query = select(Meal).where(Meal.user_id == user.id)
+    if day is not None:
+        query = query.where(Meal.eaten_on == day)
     meals = (
         await db.scalars(
-            select(Meal)
-            .where(Meal.user_id == user.id, Meal.eaten_on == target)
-            .order_by(Meal.eaten_at.desc())
-            .limit(limit)
+            query.order_by(Meal.eaten_at.desc()).limit(limit).offset(offset)
         )
     ).all()
     return [await _meal_response(db, m) for m in meals]
@@ -405,9 +410,7 @@ async def update_meal(
 
 
 @router.delete("/meals/{meal_id}", response_model=MessageResponse)
-async def delete_meal(
-    meal_id: uuid.UUID, user: CurrentUser, db: Db
-) -> MessageResponse:
+async def delete_meal(meal_id: uuid.UUID, user: CurrentUser, db: Db) -> MessageResponse:
     meal = await db.scalar(
         select(Meal).where(Meal.id == meal_id, Meal.user_id == user.id)
     )
@@ -437,12 +440,6 @@ async def day_summary(
     db: Db,
     day: date | None = Query(default=None),
 ) -> DaySummaryOut:
-    """Home dashboard for one date.
-
-    Every macro figure is what's **left** against the goal — the design labels
-    them "Protein left" / "Carbs left" / "Fat left". Reporting consumed totals
-    here would be a very visible bug.
-    """
     target = day or datetime.now(UTC).date()
 
     totals = (
@@ -463,11 +460,13 @@ async def day_summary(
     c_goal = plan.carbs_g if plan else 0
     f_goal = plan.fats_g if plan else 0
 
+    # Home "Recently eaten" shows only the latest 3;
     meals = (
         await db.scalars(
             select(Meal)
             .where(Meal.user_id == user.id, Meal.eaten_on == target)
             .order_by(Meal.eaten_at.desc())
+            .limit(3)
         )
     ).all()
 
@@ -582,9 +581,7 @@ def _tag_for(meal: Meal) -> str:
 
 
 @router.post("/favorites/{meal_id}/toggle", response_model=FavoriteOut)
-async def toggle_favorite(
-    meal_id: uuid.UUID, user: CurrentUser, db: Db
-) -> FavoriteOut:
+async def toggle_favorite(meal_id: uuid.UUID, user: CurrentUser, db: Db) -> FavoriteOut:
     meal = await db.scalar(
         select(Meal).where(Meal.id == meal_id, Meal.user_id == user.id)
     )
