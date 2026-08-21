@@ -38,6 +38,8 @@ from app.schemas.food import (
     UpdateMealRequest,
     WeekDayOut,
 )
+from app.schemas.profile import AchievementOut
+from app.services.achievements import on_meal_saved
 from app.services.storage.local import build_key, get_storage, process_photo
 from app.services.vision.base import CONTAINERS, VisionAnalysisError
 from app.services.vision.factory import get_vision_provider
@@ -290,7 +292,17 @@ async def save_meal(payload: SaveMealRequest, user: CurrentUser, db: Db) -> Meal
     analysis.saved_meal_id = meal.id
     await db.flush()
 
-    return await _meal_response(db, meal)
+    # Best-effort: a badge bug must never break saving (see the service).
+    newly = await on_meal_saved(db, user, meal)
+
+    response = await _meal_response(db, meal)
+    response.newly_unlocked = [
+        AchievementOut(
+            id=a.id, key=a.key, label=a.label, icon_key=a.icon_key, unlocked=True
+        )
+        for a in newly
+    ]
+    return response
 
 
 async def _meal_response(db: Db, meal: Meal) -> MealOut:

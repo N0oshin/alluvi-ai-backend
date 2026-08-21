@@ -394,6 +394,11 @@ Server configuration: these endpoints answer 501 `SOCIAL_AUTH_NOT_CONFIGURED` un
 | `healthScore` | integer |
 | `isFavorite` | boolean |
 | `eatenAt` | datetime |
+| `newlyUnlocked` | array of `AchievementOut` |
+
+`newlyUnlocked` lists the badges this save just earned (empty otherwise, and
+always empty on the other endpoints that return `MealOut`) — show the
+"Badge unlocked!" toast from it instead of polling `profile/achievements`.
 
 ---
 
@@ -614,6 +619,7 @@ Also reads the `langCode` header for the localised BMI category label (`category
 | `goalWeightKg` | float |  |
 | `estimatedGoalDate` | string | pre-formatted, e.g. `"Est. Sep 14"` |
 | `targetDate` | date \| null |
+| `newlyUnlocked` | array of `AchievementOut` | badges this update just earned; always empty on GET |
 
 ---
 
@@ -626,7 +632,9 @@ Also reads the `langCode` header for the localised BMI category label (`category
 | `currentWeightKg` | float \| null |
 | `goalWeightKg` | float \| null |
 
-**Response** — `CurrentWeightOut` (see above). Triggers a plan recalculation.
+**Response** — `CurrentWeightOut` (see above). Triggers a plan recalculation,
+and evaluates the weight badges (`first_kilo`, `halfway`, `goal_reached`) —
+new unlocks come back in `newlyUnlocked`.
 
 ---
 
@@ -703,6 +711,14 @@ Also reads the `langCode` header for the localised BMI category label (`category
 | `items` | array of `AchievementOut` |
 
 `AchievementOut`: `id` (UUID), `key` (string), `label` (string), `iconKey` (string), `unlocked` (boolean).
+
+Badges unlock server-side when the action that earns them happens: saving a
+meal evaluates `first_scan`, `meals_25`, `meals_100`, `early_bird`,
+`protein_pro`, `perfect_week`, `streak_7`, `streak_30`; logging a weight
+(manual update or Apple Health sync) evaluates `first_kilo`, `halfway`,
+`goal_reached`; `legend` unlocks with the other eleven. New unlocks are also
+returned inline as `newlyUnlocked` on POST `/api/meals` and
+PUT `/api/profile/weight`.
 
 ---
 

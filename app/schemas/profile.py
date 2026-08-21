@@ -112,6 +112,27 @@ class PersonalDetailsUpdate(CamelModel):
 
 
 # --------------------------------------------------------------------------
+# Achievements
+# --------------------------------------------------------------------------
+
+
+class AchievementOut(CamelModel):
+    """`iconKey` is a stable slug the client maps to an IconData."""
+
+    id: uuid.UUID
+    key: str
+    label: str
+    icon_key: str
+    unlocked: bool
+
+
+class AchievementsOut(CamelModel):
+    unlocked: int
+    total: int
+    items: list[AchievementOut] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
 # Weight
 # --------------------------------------------------------------------------
 
@@ -126,6 +147,9 @@ class CurrentWeightOut(CamelModel):
     goal_weight_kg: float
     estimated_goal_date: str
     target_date: date | None
+    # Badges this update just earned — lets the client toast "Badge
+    # unlocked!" without polling GET profile/achievements.
+    newly_unlocked: list[AchievementOut] = Field(default_factory=list)
 
 
 class WeightUpdateRequest(CamelModel):
@@ -181,22 +205,6 @@ class NotificationSettingsUpdate(CamelModel):
     tips_and_articles: bool | None = None
     quiet_start: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     quiet_end: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
-
-
-class AchievementOut(CamelModel):
-    """`iconKey` is a stable slug the client maps to an IconData."""
-
-    id: uuid.UUID
-    key: str
-    label: str
-    icon_key: str
-    unlocked: bool
-
-
-class AchievementsOut(CamelModel):
-    unlocked: int
-    total: int
-    items: list[AchievementOut] = Field(default_factory=list)
 
 
 class RingColorOut(CamelModel):

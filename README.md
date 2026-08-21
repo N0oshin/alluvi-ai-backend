@@ -159,8 +159,6 @@ that, every re-sync double-counts. Weight entries also record provenance
   (`APPLE_BUNDLE_IDS=com.alluvi.alluvi`) and live.
 - **Object storage** — photos go to local disk under `MEDIA_ROOT`. Implement
   `StorageBackend` for S3/GCS and serve time-limited pre-signed URLs.
-- **Achievement unlocking** — the catalogue is seeded and the endpoint reports
-  progress, but nothing awards badges yet.
 - **Deferred by product decision** — subscriptions/billing, referral rewards,
   PDF export, Family Plan. `isPremium` is returned but never set.
 

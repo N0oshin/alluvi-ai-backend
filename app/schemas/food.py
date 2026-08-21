@@ -12,6 +12,7 @@ from datetime import date, datetime
 from pydantic import Field
 
 from app.schemas.common import CamelModel
+from app.schemas.profile import AchievementOut
 
 
 class DetectedItemOut(CamelModel):
@@ -88,6 +89,7 @@ class MealOut(CamelModel):
     health_score: int
     is_favorite: bool
     eaten_at: datetime
+    newly_unlocked: list[AchievementOut] = Field(default_factory=list)
 
 
 class UpdateMealRequest(CamelModel):

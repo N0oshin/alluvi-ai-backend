@@ -25,6 +25,7 @@ from app.db.models import (
 )
 from app.api.v1.auth import _issue_otp
 from app.api.v1.userinfo import active_plan, recalculate_plan
+from app.services.achievements import on_weight_logged
 from app.schemas.common import MessageResponse
 from app.schemas.profile import (
     AchievementOut,
@@ -273,7 +274,18 @@ async def update_weight(
 
     await db.flush()
     await recalculate_plan(db, user)
-    return await get_weight(user, db)
+
+    # Best-effort: a badge bug must never break logging a weight.
+    newly = await on_weight_logged(db, user)
+
+    response = await get_weight(user, db)
+    response.newly_unlocked = [
+        AchievementOut(
+            id=a.id, key=a.key, label=a.label, icon_key=a.icon_key, unlocked=True
+        )
+        for a in newly
+    ]
+    return response
 
 
 @router.get("/weightHistory", response_model=list[WeightEntryOut])
@@ -336,6 +348,9 @@ async def health_sync(
 
     if imported:
         await recalculate_plan(db, user)
+        # Synced weights count toward the weight badges too; unlocks surface
+        # via GET profile/achievements rather than this response.
+        await on_weight_logged(db, user)
 
     return HealthSyncOut(
         imported=imported, skipped=skipped, last_synced_at=user.last_synced_at
