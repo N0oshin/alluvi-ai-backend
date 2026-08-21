@@ -12,6 +12,8 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
+    JSON,
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -24,10 +26,14 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, Timestamps, UUIDPrimaryKey
 
+# JSONB on Postgres, plain JSON elsewhere — the SQLite test schema is built
+# with create_all, so every type here must have a portable fallback.
+PortableJSON = JSON().with_variant(JSONB(), "postgresql")
 
 # --------------------------------------------------------------------------
 # Enums — wire values match the Dart enums in UserInfoModel exactly.
@@ -500,3 +506,118 @@ class Feedback(UUIDPrimaryKey, Timestamps, Base):
         ForeignKey("users.id", ondelete="SET NULL"), default=None
     )
     message: Mapped[str] = mapped_column(Text)
+
+
+# --------------------------------------------------------------------------
+# Food database mirror + scan logging (calorie-analysis pipeline)
+#
+# The vision model only names foods and estimates grams; the numbers come
+# from these tables. The trigram indexes are what the matcher searches; 
+# --------------------------------------------------------------------------
+
+
+class UsdaFood(Base):
+    """One food from USDA FoodData Central. Keyed by USDA's own fdc_id so
+    re-imports are idempotent upserts."""
+
+    __tablename__ = "usda_foods"
+    __table_args__ = (
+        Index(
+            "ix_usda_foods_description_trgm",
+            "description",
+            postgresql_using="gin",
+            postgresql_ops={"description": "gin_trgm_ops"},
+        ),
+    )
+
+    fdc_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=False
+    )
+    description: Mapped[str] = mapped_column(Text)
+    # foundation | sr_legacy | survey_fndds | branded
+    data_type: Mapped[str] = mapped_column(String(32), index=True)
+    category: Mapped[str | None] = mapped_column(String(128), default=None)
+
+
+class UsdaFoodNutrient(Base):
+    """Per-100g nutrient amounts. Only the four nutrients the app needs are
+    imported (1008 kcal, 1003 protein, 1004 fat, 1005 carbs)."""
+
+    __tablename__ = "usda_food_nutrients"
+
+    fdc_id: Mapped[int] = mapped_column(
+        ForeignKey("usda_foods.fdc_id", ondelete="CASCADE"), primary_key=True
+    )
+    nutrient_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    amount: Mapped[float] = mapped_column(Float)
+
+
+class OffProduct(Base):
+    """Open Food Facts packaged product. Flattened per-100g values because
+    the OFF export already ships them as columns — no nutrient indirection."""
+
+    __tablename__ = "off_products"
+    __table_args__ = (
+        Index(
+            "ix_off_products_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
+    )
+
+    barcode: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    brand: Mapped[str | None] = mapped_column(Text, default=None)
+    kcal_100g: Mapped[float | None] = mapped_column(Float, default=None)
+    protein_100g: Mapped[float | None] = mapped_column(Float, default=None)
+    carbs_100g: Mapped[float | None] = mapped_column(Float, default=None)
+    fat_100g: Mapped[float | None] = mapped_column(Float, default=None)
+
+
+class CustomFood(UUIDPrimaryKey, Timestamps, Base):
+    """Hand-curated regional dishes the public databases miss. Searched
+    before USDA/OFF so a curated entry always wins the match."""
+
+    __tablename__ = "custom_foods"
+    __table_args__ = (
+        Index(
+            "ix_custom_foods_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
+    )
+
+    name: Mapped[str] = mapped_column(Text)
+    # JSON list of alternate names ("biryani" vs "chicken biryani").
+    aliases: Mapped[list] = mapped_column(PortableJSON, default=list)
+    kcal_100g: Mapped[float] = mapped_column(Float)
+    protein_100g: Mapped[float] = mapped_column(Float)
+    carbs_100g: Mapped[float] = mapped_column(Float)
+    fat_100g: Mapped[float] = mapped_column(Float)
+    region: Mapped[str | None] = mapped_column(String(64), default=None)
+
+
+class ScanLog(UUIDPrimaryKey, Timestamps, Base):
+    """One row per analysis request, whatever the outcome. `image_sha256`
+    doubles as the result-cache key; (user_id, created_at) serves the
+    daily-quota check."""
+
+    __tablename__ = "scan_logs"
+    __table_args__ = (Index("ix_scan_logs_user_created", "user_id", "created_at"),)
+
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    route: Mapped[str] = mapped_column(String(16))  # photo | text | barcode
+    image_sha256: Mapped[str | None] = mapped_column(
+        String(64), index=True, default=None
+    )
+    prompt_version: Mapped[str | None] = mapped_column(String(32), default=None)
+    model_used: Mapped[str | None] = mapped_column(String(64), default=None)
+    raw_model_output: Mapped[dict | None] = mapped_column(PortableJSON, default=None)
+    matched_foods: Mapped[list | None] = mapped_column(PortableJSON, default=None)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, default=None)
+    estimated_cost_usd: Mapped[float | None] = mapped_column(Float, default=None)
+    status: Mapped[str] = mapped_column(String(16), default="ok")
