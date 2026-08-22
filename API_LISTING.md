@@ -17,7 +17,7 @@ Error responses share one envelope — see [Errors](#errors) below — and are n
 
 ## Resolving `imageUrl`
 
-`imageUrl` values (on `MealOut`, `FavoriteOut`, `FoodAnalysisOut`) are **relative paths** while the server runs on local storage, e.g. `/media/abc123.jpg`. Prefix them with the API base URL to load the image.
+`imageUrl` values (on `MealOut`, `FavoriteOut`, `FoodAnalysisOut`) are **relative paths** while the server runs on local storage, e.g. `/media/abc123.jpg`. Prefix them with the API base URL to load the image. The same applies to `avatarUrl` (on `ProfileOut`, `PersonalDetailsOut`, `ProfilePhotoOut`).
 
 In production these become absolute pre-signed object-storage URLs. Clients must therefore handle both: if the value starts with `http`, use it as-is; otherwise prefix the base URL.
 
@@ -58,9 +58,9 @@ In production these become absolute pre-signed object-storage URLs. Clients must
 | `REFRESH_EXPIRED` | 401 | refresh | Refresh token past its 30-day life → log the user out |
 | `REFRESH_REUSED` | 401 | refresh | A consumed token was replayed. **The whole token family is revoked** → log the user out |
 | `EMAIL_FAILED` | 502 | SignUp, forgotPassword | The email provider rejected the message. Nothing was persisted — the user may retry |
-| `NO_IMAGE` | 400 | food/analyze | No file in the `image` part |
-| `IMAGE_TOO_LARGE` | 413 | food/analyze | Over 15 MB |
-| `BAD_IMAGE` | 400 | food/analyze | Not a decodable image |
+| `NO_IMAGE` | 400 | food/analyze, profile/photo | No file in the `image` part |
+| `IMAGE_TOO_LARGE` | 413 | food/analyze, profile/photo | Over 15 MB |
+| `BAD_IMAGE` | 400 | food/analyze, profile/photo | Not a decodable image |
 | `ANALYSIS_FAILED` | 400 | food/analyze | The vision provider could not analyse the photo |
 | `NO_PLAN` | 404 | userinfo/plan, nutritionGoals | Onboarding has not run — send the user to `POST /api/userinfo/plan` |
 | `SOCIAL_AUTH_NOT_CONFIGURED` | 501 | Auth/apple, Auth/google | Server has no client ID / bundle ID configured for that provider |
@@ -556,6 +556,9 @@ Also reads the `langCode` header for the localised BMI category label (`category
 | `streakDays` | integer |
 | `appleHealthConnected` | boolean |
 | `lastSyncedAt` | datetime \| null |
+| `avatarUrl` | string \| null |
+
+`avatarUrl` is `null` when no profile photo is set — see [Resolving `imageUrl`](#resolving-imageurl) for how to load it.
 
 ---
 
@@ -589,6 +592,7 @@ Also reads the `langCode` header for the localised BMI category label (`category
 | `gender` | string |
 | `heightCm` | float |
 | `birthday` | date \| null |
+| `avatarUrl` | string \| null |
 | `emailVerificationRequired` | boolean (default `false`) |
 
 ---
@@ -606,6 +610,36 @@ Also reads the `langCode` header for the localised BMI category label (`category
 | `birthday` | date \| null |
 
 **Response** — `PersonalDetailsOut` (see above). 409 `EMAIL_TAKEN` on a clash.
+
+---
+
+### POST `/api/profile/photo` → 200 · Auth: **Yes**
+
+Uploads (or replaces) the profile photo. There is no separate update endpoint — posting again replaces the current photo, and there is no dedicated GET: read the current photo from `avatarUrl` on `GET /api/profile` or `GET /api/profile/personalDetails`.
+
+**Request** — `multipart/form-data`
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `image` | file | required; max 15 MB; downscaled and re-encoded to JPEG, which strips EXIF/GPS |
+
+**Response** — `ProfilePhotoOut`
+
+| Field | Type |
+| --- | --- |
+| `avatarUrl` | string \| null |
+
+Each upload gets a **fresh URL** (a new photo id), so a replaced photo never serves stale from the client image cache — always display the URL from the latest response.
+
+Errors: 400 `NO_IMAGE` (empty file part), 413 `IMAGE_TOO_LARGE` (over 15 MB), 400 `BAD_IMAGE` (not a decodable image).
+
+---
+
+### DELETE `/api/profile/photo` → 200 · Auth: **Yes**
+
+**Request** — none
+
+**Response** — `ProfilePhotoOut` with `avatarUrl: null`. Idempotent — deleting when no photo is set is still a 200.
 
 ---
 
