@@ -349,9 +349,6 @@ async def analyze_food_text(
 
 @router.get("/food/barcode/{code}", response_model=FoodAnalysisOut)
 async def analyze_barcode(code: str, user: CurrentUser, db: Db) -> FoodAnalysisOut:
-    """No model call, ever. Cache-first: the off_products table starts
-    empty; a first-ever scan fetches the product live from Open Food Facts
-    and caches it, so every later scan is a pure local lookup."""
     code = code.strip()
     product = await db.scalar(select(OffProduct).where(OffProduct.barcode == code))
     if product is None:
