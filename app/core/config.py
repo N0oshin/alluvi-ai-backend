@@ -48,10 +48,17 @@ class Settings(BaseSettings):
     APPLE_BUNDLE_IDS: str | None = None
 
     # --- vision provider ---
-    # "stub"   -> deterministic fake analysis, no API key, used by tests
-    # "claude" -> Anthropic vision (requires ANTHROPIC_API_KEY)
-    VISION_PROVIDER: Literal["stub", "claude"] = "stub"
+    # "stub"     -> deterministic fake analysis, no API key, used by tests
+    # "claude"   -> Anthropic vision (requires ANTHROPIC_API_KEY)
+    # "pipeline" -> Gemini vision + local food DB (requires GEMINI_API_KEY)
+    VISION_PROVIDER: Literal["stub", "claude", "pipeline"] = "stub"
     ANTHROPIC_API_KEY: str | None = None
+    # Gemini — the self-built analysis pipeline's vision model.
+    GEMINI_API_KEY: str | None = None
+    GEMINI_MODEL: str = "gemini-3-flash"
+    # Multiplies every portion estimate before nutrition is computed — the
+    # one global tuning knob once eval data shows a systematic bias.
+    PORTION_BIAS: float = 1.0
     VISION_MODEL: str = "claude-opus-5"
     VISION_EFFORT: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     VISION_MAX_TOKENS: int = 8000
