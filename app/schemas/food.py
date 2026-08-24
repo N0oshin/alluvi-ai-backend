@@ -24,6 +24,10 @@ class DetectedItemOut(CamelModel):
     label: str
     cx: float
     cy: float
+    # Per-item portion estimate from the analysis pipeline. Null on the
+    # stub/claude providers, so old clients see the shape they always did.
+    grams: int | None = None
+    confidence: float | None = None
 
 
 class FoodAnalysisOut(CamelModel):

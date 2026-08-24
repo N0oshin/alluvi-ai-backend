@@ -29,6 +29,9 @@ class DetectedItemResult:
     label: str
     cx: float = 0.5
     cy: float = 0.5
+    # Per-item portion data (pipeline provider only; stub/claude leave None).
+    grams: int | None = None
+    confidence: float | None = None
 
 
 @dataclass(slots=True)

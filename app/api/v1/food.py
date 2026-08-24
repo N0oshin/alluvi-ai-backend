@@ -195,7 +195,13 @@ async def analyze_food(
         scale_reference=result.scale_reference,
         image_url=storage.url_for(photo.storage_key),
         detected_items=[
-            DetectedItemOut(label=i.label, cx=i.cx, cy=i.cy)
+            DetectedItemOut(
+                label=i.label,
+                cx=i.cx,
+                cy=i.cy,
+                grams=i.grams,
+                confidence=i.confidence,
+            )
             for i in result.detected_items
         ],
     )

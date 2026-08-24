@@ -15,4 +15,8 @@ def get_vision_provider() -> VisionProvider:
         from app.services.vision.claude import ClaudeVisionProvider
 
         return ClaudeVisionProvider()
+    if settings.VISION_PROVIDER == "pipeline":
+        from app.services.vision.pipeline import PipelineVisionProvider
+
+        return PipelineVisionProvider()
     return StubVisionProvider()

@@ -130,12 +130,17 @@ class GeminiScanClient:
         }
 
         started = time.perf_counter()
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
-                API_URL.format(model=self.model),
-                headers={"x-goog-api-key": self.api_key},
-                json=body,
-            )
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    API_URL.format(model=self.model),
+                    headers={"x-goog-api-key": self.api_key},
+                    json=body,
+                )
+        except httpx.HTTPError as exc:
+            # Timeouts, resets, DNS — transport failures are analysis
+            # failures too, not 500s.
+            raise VisionAnalysisError("food.analysis_failed") from exc
         latency_ms = int((time.perf_counter() - started) * 1000)
 
         if resp.status_code != 200:
