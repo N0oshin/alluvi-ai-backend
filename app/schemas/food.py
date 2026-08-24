@@ -30,6 +30,13 @@ class DetectedItemOut(CamelModel):
     confidence: float | None = None
 
 
+class TextAnalyzeRequest(CamelModel):
+    """POST /food/analyze-text — the no-camera path."""
+
+    description: str = Field(min_length=3, max_length=500)
+    container: str | None = None
+
+
 class FoodAnalysisOut(CamelModel):
     """Response for POST /food/analyze — matches MealNutritionModel.
 

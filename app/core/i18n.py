@@ -121,6 +121,14 @@ _MESSAGES: dict[str, dict[Lang, str]] = {
         Lang.EN: "We couldn't find any food in that photo. Try scanning again.",
         Lang.AR: "لم نتمكن من العثور على طعام في هذه الصورة. حاول المسح مرة أخرى.",
     },
+    "food.no_description": {
+        Lang.EN: "Please describe your meal.",
+        Lang.AR: "برجاء وصف وجبتك.",
+    },
+    "food.barcode_unknown": {
+        Lang.EN: "We don't know that product yet. Try scanning the meal instead.",
+        Lang.AR: "لا نعرف هذا المنتج بعد. جرّب مسح الوجبة بدلًا من ذلك.",
+    },
     # --- profile ---
     "profile.plan_missing": {
         Lang.EN: "Finish your onboarding to get your daily plan.",

@@ -573,6 +573,9 @@ class OffProduct(Base):
     barcode: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(Text)
     brand: Mapped[str | None] = mapped_column(Text, default=None)
+    # Grams in one serving as printed on the pack ("1 bar = 45 g"); null
+    # when OFF doesn't know, and the barcode route then prices 100 g.
+    serving_grams: Mapped[float | None] = mapped_column(Float, default=None)
     kcal_100g: Mapped[float | None] = mapped_column(Float, default=None)
     protein_100g: Mapped[float | None] = mapped_column(Float, default=None)
     carbs_100g: Mapped[float | None] = mapped_column(Float, default=None)

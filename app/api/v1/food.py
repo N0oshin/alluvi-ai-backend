@@ -10,12 +10,14 @@ returns to the camera. There is deliberately no correction endpoint here.
 
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, File, Form, Query, UploadFile, status
 from sqlalchemy import func, select
 
+from app.core.config import settings
 from app.core.deps import CurrentUser, Db, not_found
 from app.core.errors import AppError
 from app.db.models import (
@@ -25,8 +27,17 @@ from app.db.models import (
     MealPhoto,
     MealType,
     NutritionPlan,
+    OffProduct,
     PortionConfidence,
 )
+from app.services.nutrition.nutri_cal import (
+    health_score_from_macros,
+    log_scan,
+    price_scan,
+)
+from app.services.nutrition.off_client import fetch_product
+from app.services.nutrition.sanity import reconcile_kcal
+from app.services.vision.gemini import PROMPT_VERSION, GeminiScanClient
 from app.schemas.common import MessageResponse
 from app.schemas.food import (
     DaySummaryOut,
@@ -35,13 +46,18 @@ from app.schemas.food import (
     FoodAnalysisOut,
     MealOut,
     SaveMealRequest,
+    TextAnalyzeRequest,
     UpdateMealRequest,
     WeekDayOut,
 )
 from app.schemas.profile import AchievementOut
 from app.services.achievements import on_meal_saved
 from app.services.storage.local import build_key, get_storage, process_photo
-from app.services.vision.base import CONTAINERS, VisionAnalysisError
+from app.services.vision.base import (
+    CONTAINERS,
+    DetectedItemResult,
+    VisionAnalysisError,
+)
 from app.services.vision.factory import get_vision_provider
 
 router = APIRouter(tags=["food"])
@@ -204,6 +220,221 @@ async def analyze_food(
             )
             for i in result.detected_items
         ],
+    )
+
+
+# --------------------------------------------------------------------------
+# Analyze: text + barcode routes (no photo)
+# --------------------------------------------------------------------------
+
+
+async def _respond_for_analysis(
+    db: Db,
+    user_id: uuid.UUID,
+    analysis: FoodAnalysis,
+    result_items: list,
+    image_url: str | None,
+) -> FoodAnalysisOut:
+    """FoodAnalysisOut for a freshly persisted analysis (non-photo routes)."""
+    plan = await _active_plan(db, user_id)
+    now = datetime.now(UTC)
+    return FoodAnalysisOut(
+        analysis_id=analysis.id,
+        name=analysis.name,
+        time_label=_format_time(now),
+        meal_type_label=_meal_type_for(now).value.upper(),
+        calories_per_serving=analysis.calories_per_serving,
+        protein_grams_per_serving=analysis.protein_g_per_serving,
+        carbs_grams_per_serving=analysis.carbs_g_per_serving,
+        fat_grams_per_serving=analysis.fat_g_per_serving,
+        protein_progress=_progress(
+            analysis.protein_g_per_serving, plan.protein_g if plan else None
+        ),
+        carbs_progress=_progress(
+            analysis.carbs_g_per_serving, plan.carbs_g if plan else None
+        ),
+        fat_progress=_progress(
+            analysis.fat_g_per_serving, plan.fats_g if plan else None
+        ),
+        health_score=analysis.health_score,
+        health_score_max=analysis.health_score_max,
+        estimated_portion_grams=analysis.estimated_portion_grams,
+        portion_confidence=analysis.portion_confidence.value,
+        scale_reference=analysis.scale_reference,
+        image_url=image_url,
+        detected_items=[
+            DetectedItemOut(
+                label=i.label,
+                cx=i.cx,
+                cy=i.cy,
+                grams=i.grams,
+                confidence=i.confidence,
+            )
+            for i in result_items
+        ],
+    )
+
+
+@router.post("/food/analyze-text", response_model=FoodAnalysisOut)
+async def analyze_food_text(
+    payload: TextAnalyzeRequest, user: CurrentUser, db: Db
+) -> FoodAnalysisOut:
+    """Same pipeline as the photo route, minus the camera: the model reads
+    the description, the database prices it."""
+    hint = payload.container.strip().lower() if payload.container else None
+    if hint not in CONTAINERS:
+        hint = None
+
+    started = time.perf_counter()
+    try:
+        client = GeminiScanClient()
+        scan, meta = await client.scan(
+            text_description=payload.description, container=hint
+        )
+    except VisionAnalysisError as exc:
+        await log_scan(
+            route="text",
+            status="error",
+            user_id=user.id,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            model_used=settings.GEMINI_MODEL,
+            prompt_version=PROMPT_VERSION,
+        )
+        raise AppError(exc.message_key, code="ANALYSIS_FAILED") from exc
+
+    if scan.not_food or not scan.items:
+        await log_scan(route="text", status="not_food", user_id=user.id, meta=meta)
+        raise AppError("food.not_food", code="ANALYSIS_FAILED")
+
+    result, matched = await price_scan(scan, meta)
+    await log_scan(
+        route="text",
+        status="ok",
+        user_id=user.id,
+        meta=meta,
+        matched_foods=matched,
+    )
+
+    analysis = FoodAnalysis(
+        user_id=user.id,
+        photo_id=None,
+        name=result.name,
+        calories_per_serving=result.calories_per_serving,
+        protein_g_per_serving=result.protein_g_per_serving,
+        carbs_g_per_serving=result.carbs_g_per_serving,
+        fat_g_per_serving=result.fat_g_per_serving,
+        health_score=result.health_score,
+        health_score_max=result.health_score_max,
+        estimated_portion_grams=result.estimated_portion_grams,
+        portion_confidence=PortionConfidence(result.portion_confidence),
+        scale_reference=result.scale_reference,
+        container_hint=hint,
+        provider="pipeline",
+        model=result.model,
+    )
+    db.add(analysis)
+    await db.flush()
+    for item in result.detected_items:
+        db.add(
+            DetectedItem(
+                analysis_id=analysis.id, label=item.label, cx=item.cx, cy=item.cy
+            )
+        )
+    await db.flush()
+
+    return await _respond_for_analysis(
+        db, user.id, analysis, result.detected_items, image_url=None
+    )
+
+
+@router.get("/food/barcode/{code}", response_model=FoodAnalysisOut)
+async def analyze_barcode(code: str, user: CurrentUser, db: Db) -> FoodAnalysisOut:
+    """No model call, ever. Cache-first: the off_products table starts
+    empty; a first-ever scan fetches the product live from Open Food Facts
+    and caches it, so every later scan is a pure local lookup."""
+    code = code.strip()
+    product = await db.scalar(select(OffProduct).where(OffProduct.barcode == code))
+    if product is None:
+        fetched = await fetch_product(code)
+        if fetched is not None:
+            product = OffProduct(**fetched)
+            db.add(product)
+            await db.flush()
+    if product is None or product.kcal_100g is None:
+        await log_scan(route="barcode", status="miss", user_id=user.id)
+        raise AppError(
+            "food.barcode_unknown",
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="BARCODE_UNKNOWN",
+        )
+
+    grams = product.serving_grams or 100.0
+    p100_p = product.protein_100g or 0.0
+    p100_c = product.carbs_100g or 0.0
+    p100_f = product.fat_100g or 0.0
+    kcal_100 = reconcile_kcal(product.kcal_100g, p100_p, p100_c, p100_f)
+    factor = grams / 100.0
+
+    # Brand prefixes the name unless it's already in it ("Nutella Nutella").
+    name = (
+        f"{product.brand} {product.name}"
+        if product.brand and product.brand.lower() not in product.name.lower()
+        else product.name
+    )
+    analysis = FoodAnalysis(
+        user_id=user.id,
+        photo_id=None,
+        name=name[:200],
+        calories_per_serving=round(kcal_100 * factor),
+        protein_g_per_serving=round(p100_p * factor),
+        carbs_g_per_serving=round(p100_c * factor),
+        fat_g_per_serving=round(p100_f * factor),
+        health_score=health_score_from_macros(kcal_100, p100_p, p100_c, p100_f),
+        health_score_max=10,
+        estimated_portion_grams=round(grams),
+        # A printed label beats any estimate; "high" only when the pack told
+        # us the serving size, since 100 g is our guess, not theirs.
+        portion_confidence=PortionConfidence.high
+        if product.serving_grams
+        else PortionConfidence.medium,
+        scale_reference="label",
+        provider="pipeline",
+        model=None,
+    )
+    db.add(analysis)
+    await db.flush()
+    item = DetectedItem(analysis_id=analysis.id, label=product.name[:120])
+    db.add(item)
+    await db.flush()
+
+    await log_scan(
+        route="barcode",
+        status="ok",
+        user_id=user.id,
+        matched_foods=[
+            {
+                "query": code,
+                "source": "off",
+                "matched": name,
+                "score": 1.0,
+                "grams": grams,
+                "kcal": round(kcal_100 * factor, 1),
+            }
+        ],
+    )
+
+    return await _respond_for_analysis(
+        db,
+        user.id,
+        analysis,
+        [
+            DetectedItemResult(
+                label=product.name[:120],
+                grams=round(grams),
+                confidence=1.0 if product.serving_grams else 0.5,
+            )
+        ],
+        image_url=None,
     )
 
 
