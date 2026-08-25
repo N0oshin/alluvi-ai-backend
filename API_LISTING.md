@@ -61,7 +61,9 @@ In production these become absolute pre-signed object-storage URLs. Clients must
 | `NO_IMAGE` | 400 | food/analyze, profile/photo | No file in the `image` part |
 | `IMAGE_TOO_LARGE` | 413 | food/analyze, profile/photo | Over 15 MB |
 | `BAD_IMAGE` | 400 | food/analyze, profile/photo | Not a decodable image |
-| `ANALYSIS_FAILED` | 400 | food/analyze | The vision provider could not analyse the photo |
+| `ANALYSIS_FAILED` | 400 | food/analyze, food/analyze-text | The vision pipeline could not analyse the photo/description (all providers failed, or the image contains no food) |
+| `SCAN_LIMIT` | 429 | food/analyze, food/analyze-text | The user spent today's AI-scan allowance (50/day by default, UTC reset). Barcode lookups are uncounted |
+| `BARCODE_UNKNOWN` | 404 | food/barcode | The barcode is unknown to the product database and to Open Food Facts (or carries no nutrition data) |
 | `NO_PLAN` | 404 | userinfo/plan, nutritionGoals | Onboarding has not run — send the user to `POST /api/userinfo/plan` |
 | `SOCIAL_AUTH_NOT_CONFIGURED` | 501 | Auth/apple, Auth/google | Server has no client ID / bundle ID configured for that provider |
 | `SOCIAL_AUTH_INVALID` | 401 | Auth/apple, Auth/google | Identity token failed signature, expiry, issuer, or audience checks |
@@ -361,7 +363,47 @@ Server configuration: these endpoints answer 501 `SOCIAL_AUTH_NOT_CONFIGURED` un
 | `imageUrl` | string \| null |
 | `detectedItems` | array of `DetectedItemOut` |  |
 
-`DetectedItemOut`: `label` (string), `cx` (float), `cy` (float).
+`DetectedItemOut`: `label` (string), `cx` (float), `cy` (float), `grams` (integer | null), `confidence` (float | null).
+
+`grams` / `confidence` are the per-item portion estimate and the model's confidence in it (0..1). They are `null` on legacy vision providers — treat them as optional.
+
+Notes on behaviour:
+
+- Re-sending a **byte-identical image** within 24h reuses the cached analysis (instant, does not count against the scan limit).
+- On a model outage the pipeline retries once, then switches to a fallback provider automatically — expect occasional responses in the 10–30 s range rather than an error.
+- 429 `SCAN_LIMIT` once the user's daily allowance (default 50 photo+text scans, UTC day) is spent.
+
+---
+
+### POST `/api/food/analyze-text` → 200 · Auth: **Yes**
+
+Same analysis pipeline, no camera: the user *describes* the meal instead of photographing it. (No client UI exists for this yet.)
+
+**Request** — `TextAnalyzeRequest`
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `description` | string | 3–500 chars, e.g. `"a bowl of spaghetti bolognese and an orange juice"` |
+| `container` | string \| null | optional, same values as `food/analyze` |
+
+**Response** — `FoodAnalysisOut` (see above), with `imageUrl: null` and item `cx`/`cy` at 0.5. Counts against the same daily scan limit.
+
+---
+
+### GET `/api/food/barcode/{code}` → 200 · Auth: **Yes**
+
+Packaged-product lookup by barcode digits (e.g. EAN-13). **No AI involved** — a local product cache backed by a live Open Food Facts lookup on first-ever scan, so an uncached product adds ~0.5 s once; every later scan of it is instant. Does **not** count against the scan limit.
+
+**Path** — `code` (string, the barcode digits)
+
+**Response** — `FoodAnalysisOut` (see above), where:
+
+- per-serving values cover **one pack serving** when the pack declares one, else **100 g** (check `estimatedPortionGrams`)
+- `portionConfidence` is `high` when the pack declared a serving size, `medium` when 100 g was assumed
+- `scaleReference` is always `"label"`, `imageUrl` is `null`
+- `healthScore` is derived from the macros (no model in the loop)
+
+404 `BARCODE_UNKNOWN` when the product can't be found or has no nutrition data — the client should offer photo scanning as the fallback.
 
 ---
 
