@@ -1,7 +1,7 @@
 """
-
+the Claude (Haiku 4.5) emergency scan client
 Used only when Gemini fails twice (see resilient.py). Same prompt file and
-the same Pydantic validation as the Gemini client, 
+the same Pydantic validation as the Gemini client,
 Distinct from the legacy ClaudeVisionProvider (claude.py), which implements
 the old single-model contract; this one speaks the pipeline's ScanResult.
 """
@@ -53,8 +53,7 @@ class ClaudeScanClient:
         system = (
             _load_prompt()
             + "\n\nRespond with ONLY a JSON object (no prose, no markdown "
-            "fences) matching this schema:\n"
-            + json.dumps(GEMINI_RESPONSE_SCHEMA)
+            "fences) matching this schema:\n" + json.dumps(GEMINI_RESPONSE_SCHEMA)
         )
 
         content: list[dict] = []

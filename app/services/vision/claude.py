@@ -1,7 +1,5 @@
 """Anthropic (Claude) vision provider.
 
-the Claude (Haiku 4.5) emergency scan client
-
 Notes that matter here:
   * Thinking is on by default on Claude Opus 5.
   * Safety classifiers can decline a request: that is an HTTP 200 with
