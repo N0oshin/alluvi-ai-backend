@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     # Multiplies every portion estimate before nutrition is computed — the
     # one global tuning knob once eval data shows a systematic bias.
     PORTION_BIAS: float = 1.0
+    # --- pipeline resilience ---
+    # When Gemini fails twice, the same scan goes to Claude directly via the
+    # Anthropic API. Haiku: cheap and fast.
+    ANTHROPIC_FALLBACK_MODEL: str = "claude-haiku-4-5"
+    # Identical image bytes within this window reuse the logged model output
+    # instead of a new model call. Global across users by design.
+    SCAN_CACHE_TTL_HOURS: int = 24
+    # AI scans (photo + text) allowed per user per UTC day; barcode is free
+    # and uncounted.
+    DAILY_SCAN_LIMIT: int = 50
     VISION_MODEL: str = "claude-opus-5"
     VISION_EFFORT: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     VISION_MAX_TOKENS: int = 8000

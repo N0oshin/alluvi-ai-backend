@@ -34,10 +34,12 @@ from app.services.nutrition.nutri_cal import (
     health_score_from_macros,
     log_scan,
     price_scan,
+    scans_today,
 )
 from app.services.nutrition.off_client import fetch_product
 from app.services.nutrition.sanity import reconcile_kcal
-from app.services.vision.gemini import PROMPT_VERSION, GeminiScanClient
+from app.services.vision.gemini import PROMPT_VERSION
+from app.services.vision.resilient import resilient_scan
 from app.schemas.common import MessageResponse
 from app.schemas.food import (
     DaySummaryOut,
@@ -92,6 +94,16 @@ def _progress(value: float, goal: float | None) -> float:
     return round(min(1.0, max(0.0, value / goal)), 3)
 
 
+async def _enforce_scan_limit(db: Db, user_id: uuid.UUID) -> None:
+    """429 once today's AI-scan allowance is spent. Barcode is uncounted."""
+    if await scans_today(db, user_id) >= settings.DAILY_SCAN_LIMIT:
+        raise AppError(
+            "food.scan_limit",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            code="SCAN_LIMIT",
+        )
+
+
 def _format_time(moment: datetime) -> str:
     """ "12:07" — 24h avoids the %-I directive, which is not portable to Windows."""
     return moment.astimezone(UTC).strftime("%H:%M")
@@ -109,6 +121,8 @@ async def analyze_food(
     image: UploadFile = File(...),
     container: str | None = Form(default=None),
 ) -> FoodAnalysisOut:
+    await _enforce_scan_limit(db, user.id)
+
     raw = await image.read()
     if not raw:
         raise AppError("food.no_image", code="NO_IMAGE")
@@ -149,7 +163,9 @@ async def analyze_food(
 
     provider = get_vision_provider()
     try:
-        result = await provider.analyze(processed, "image/jpeg", container=hint)
+        result = await provider.analyze(
+            processed, "image/jpeg", container=hint, user_id=user.id
+        )
     except VisionAnalysisError as exc:
         # Orphan the photo rather than leaving a dangling analysis row.
         await storage.delete(photo.storage_key)
@@ -281,14 +297,15 @@ async def analyze_food_text(
 ) -> FoodAnalysisOut:
     """Same pipeline as the photo route, minus the camera: the model reads
     the description, the database prices it."""
+    await _enforce_scan_limit(db, user.id)
+
     hint = payload.container.strip().lower() if payload.container else None
     if hint not in CONTAINERS:
         hint = None
 
     started = time.perf_counter()
     try:
-        client = GeminiScanClient()
-        scan, meta = await client.scan(
+        scan, meta = await resilient_scan(
             text_description=payload.description, container=hint
         )
     except VisionAnalysisError as exc:

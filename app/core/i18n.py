@@ -125,6 +125,10 @@ _MESSAGES: dict[str, dict[Lang, str]] = {
         Lang.EN: "Please describe your meal.",
         Lang.AR: "برجاء وصف وجبتك.",
     },
+    "food.scan_limit": {
+        Lang.EN: "You've reached today's scan limit. It resets at midnight.",
+        Lang.AR: "لقد وصلت إلى الحد اليومي للمسح. يُعاد التعيين عند منتصف الليل.",
+    },
     "food.barcode_unknown": {
         Lang.EN: "We don't know that product yet. Try scanning the meal instead.",
         Lang.AR: "لا نعرف هذا المنتج بعد. جرّب مسح الوجبة بدلًا من ذلك.",

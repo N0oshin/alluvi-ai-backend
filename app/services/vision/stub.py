@@ -38,6 +38,7 @@ class StubVisionProvider(VisionProvider):
         mime_type: str = "image/jpeg",
         *,
         container: str | None = None,
+        user_id: object | None = None,
     ) -> FoodAnalysisResult:
         digest = hashlib.sha256(image_bytes).digest()
         name, ingredients = _DISHES[digest[0] % len(_DISHES)]

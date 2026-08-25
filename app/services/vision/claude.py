@@ -1,8 +1,6 @@
 """Anthropic (Claude) vision provider.
 
-Uses the Messages API with a base64 image block and `output_config.format`,
-which constrains the response to a JSON Schema — so the model cannot return
-prose we then have to salvage with a regex.
+the Claude (Haiku 4.5) emergency scan client
 
 Notes that matter here:
   * Thinking is on by default on Claude Opus 5.
@@ -174,6 +172,7 @@ class ClaudeVisionProvider(VisionProvider):
         mime_type: str = "image/jpeg",
         *,
         container: str | None = None,
+        user_id: object | None = None,
     ) -> FoodAnalysisResult:
         import anthropic
 

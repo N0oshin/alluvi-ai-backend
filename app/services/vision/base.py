@@ -101,6 +101,7 @@ class VisionProvider(abc.ABC):
         mime_type: str = "image/jpeg",
         *,
         container: str | None = None,
+        user_id: object | None = None,
     ) -> FoodAnalysisResult:
         """Analyse a food photo. Raises VisionAnalysisError on failure.
 

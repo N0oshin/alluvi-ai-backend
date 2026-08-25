@@ -119,6 +119,26 @@ def health_score_from_macros(
     return max(1, min(10, round(score)))
 
 
+async def scans_today(db, user_id) -> int:
+    from datetime import UTC, datetime
+
+    from sqlalchemy import func, select
+
+    midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (
+        await db.execute(
+            select(func.count())
+            .select_from(ScanLog)
+            .where(
+                ScanLog.user_id == user_id,
+                ScanLog.route.in_(("photo", "text")),
+                ScanLog.status != "cached",
+                ScanLog.created_at >= midnight,
+            )
+        )
+    ).scalar_one()
+
+
 async def log_scan(
     *,
     route: str,
