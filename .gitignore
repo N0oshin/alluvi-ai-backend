@@ -20,3 +20,5 @@ GUIDE.md
 note-db_to_supabase.txt
 
 data/
+
+secrets/

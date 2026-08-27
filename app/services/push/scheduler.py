@@ -71,7 +71,7 @@ async def _streak_message(db, user: User, local_date) -> PushMessage | None:
         return None
 
     return PushMessage(
-        title=f"🔥 Your {streak}-day streak is at risk",
+        title=f"🔥 Your {streak} day streak is at risk",
         body="Log one meal before midnight to keep it alive.",
     )
 
