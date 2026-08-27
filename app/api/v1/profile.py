@@ -6,6 +6,8 @@ import json
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
+from app.core.timeutil import local_today
+
 from fastapi import APIRouter, File, Query, UploadFile, status
 from sqlalchemy import func, select
 
@@ -68,8 +70,14 @@ async def _latest_weight(db: Db, user_id) -> WeightEntry | None:
     )
 
 
-async def compute_streak(db: Db, user_id) -> int:
-    """Consecutive days ending today (or yesterday) with at least one meal."""
+async def compute_streak(db: Db, user_id, tz: str = "UTC") -> int:
+    """Consecutive days ending today (or yesterday) with at least one meal.
+
+    "Today" is the *user's* today (`tz` = their IANA zone): eaten_on labels
+    are written on the user's calendar (see food.py), so the anchor must be
+    read off the same calendar or a fresh streak day wouldn't count until
+    UTC catches up.
+    """
     rows = (
         await db.scalars(
             select(Meal.eaten_on)
@@ -83,7 +91,7 @@ async def compute_streak(db: Db, user_id) -> int:
         return 0
 
     logged = sorted(set(rows), reverse=True)
-    today = datetime.now(UTC).date()
+    today = local_today(tz)
 
     # Today not logged yet is not a broken streak — start from yesterday.
     if logged[0] == today:
@@ -129,7 +137,7 @@ async def get_profile(user: CurrentUser, db: Db) -> ProfileOut:
         is_premium=user.is_premium,
         calories_left=max(0, goal - consumed),
         calorie_goal=goal,
-        streak_days=await compute_streak(db, user.id),
+        streak_days=await compute_streak(db, user.id, user.timezone),
         apple_health_connected=user.apple_health_connected,
         last_synced_at=user.last_synced_at,
         avatar_url=_avatar_url(user),

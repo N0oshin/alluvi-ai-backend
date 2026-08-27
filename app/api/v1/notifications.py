@@ -1,7 +1,6 @@
 """Push token registration.
 
-This is the one contract already live in the shipped client
-(`DeviceTokenManager`), and it is unusually strict: the client only records
+the client only records
 success when the status is 200 **and the response body is the literal JSON
 `true`**. Anything else and it re-sends on the next launch. So both endpoints
 return a bare boolean, not an envelope.
@@ -11,6 +10,8 @@ both are stored in the same column without interpretation.
 """
 
 from __future__ import annotations
+
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
 from sqlalchemy import select
@@ -24,8 +25,7 @@ router = APIRouter(prefix="/UserNotification", tags=["notifications"])
 
 @router.post("/addAnonymousToken", response_model=bool)
 async def add_anonymous_token(payload: DeviceTokenRequest, db: Db) -> bool:
-    """The only genuinely unauthenticated endpoint: it registers a push token
-    before the user has signed in."""
+    """it registers a push token before the user has signed in."""
     existing = await db.scalar(
         select(DeviceToken).where(DeviceToken.token == payload.token)
     )
@@ -47,5 +47,17 @@ async def add_user_token(
     else:
         # Claim a token that was registered anonymously before sign-in.
         existing.user_id = user.id
+
+    # The app calls this on every launch, so it doubles as the timezone
+    # heartbeat — reminders follow the user when they travel. An unknown zone
+    # name is dropped rather than failing the registration.
+    if payload.timezone and payload.timezone != user.timezone:
+        try:
+            ZoneInfo(payload.timezone)
+        except (KeyError, ValueError):
+            pass
+        else:
+            user.timezone = payload.timezone
+
     await db.flush()
     return True

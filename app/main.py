@@ -5,8 +5,9 @@ carries a trailing slash, so everything mounts under `/api/`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -17,6 +18,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.errors import register_error_handlers
 from app.db.session import SessionLocal
+from app.services.push.scheduler import reminder_loop
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -29,12 +31,22 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     Path(settings.MEDIA_ROOT).mkdir(parents=True, exist_ok=True)
     logger.info(
-        "Starting %s (vision=%s, storage=%s)",
+        "Starting %s (vision=%s, storage=%s, push=%s)",
         settings.APP_NAME,
         settings.VISION_PROVIDER,
         settings.STORAGE_BACKEND,
+        settings.PUSH_PROVIDER,
     )
-    yield
+    reminder_task = (
+        asyncio.create_task(reminder_loop()) if settings.REMINDERS_ENABLED else None
+    )
+    try:
+        yield
+    finally:
+        if reminder_task is not None:
+            reminder_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await reminder_task
 
 
 app = FastAPI(

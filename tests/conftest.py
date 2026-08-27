@@ -16,6 +16,10 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 # would trip long before the tests finish. The dedicated rate-limit tests
 # flip this back on per-test.
 os.environ["RATE_LIMIT_ENABLED"] = "false"
+# Pinned like EMAIL_PROVIDER: the reminder loop must never tick (or push)
+# during a test run.
+os.environ["PUSH_PROVIDER"] = "console"
+os.environ["REMINDERS_ENABLED"] = "false"
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402

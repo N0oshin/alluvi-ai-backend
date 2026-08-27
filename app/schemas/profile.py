@@ -251,3 +251,7 @@ class FeedbackRequest(CamelModel):
 
 class DeviceTokenRequest(CamelModel):
     token: str = Field(min_length=1, max_length=512)
+    # IANA zone name; optional so the shipped client (which doesn't send it)
+    # keeps working. Validated against zoneinfo at the endpoint, not here —
+    # a bad zone shouldn't fail token registration.
+    timezone: str | None = Field(default=None, max_length=64)

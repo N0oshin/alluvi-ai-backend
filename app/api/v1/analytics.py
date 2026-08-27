@@ -123,6 +123,6 @@ async def analytics(
             series=series,
         ),
         current_bmi=bmi_out,
-        streak=StreakOut(days=await compute_streak(db, user.id)),
+        streak=StreakOut(days=await compute_streak(db, user.id, user.timezone)),
         calories_this_week=calories_week,
     )

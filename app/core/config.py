@@ -85,6 +85,19 @@ class Settings(BaseSettings):
     PASSWORD_RESET_URL: str = "https://alluvi.dev/reset-password"
     PASSWORD_RESET_TTL_HOURS: int = 1
 
+    # --- push notifications ---
+    # "console" -> written to the log, no network, no key; the dev default and
+    #              what the tests run against.
+    # "fcm"     -> real delivery via Firebase Cloud Messaging (requires
+    #              FIREBASE_CREDENTIALS).
+    PUSH_PROVIDER: Literal["console", "fcm"] = "console"
+    # Path to the Firebase service-account JSON (Project settings → Service
+    # accounts → Generate new private key). Never committed.
+    FIREBASE_CREDENTIALS: str | None = None
+    # The in-process meal-reminder loop (services/push/scheduler.py). Off in
+    # tests; harmless but noisy locally with PUSH_PROVIDER=console.
+    REMINDERS_ENABLED: bool = True
+
     # --- storage ---
     # "local" writes under MEDIA_ROOT and serves via /media.
     STORAGE_BACKEND: Literal["local"] = "local"

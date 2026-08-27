@@ -146,6 +146,12 @@ class User(UUIDPrimaryKey, Timestamps, Base):
         DateTime(timezone=True), default=None
     )
 
+    # IANA zone name ("Asia/Riyadh"), reported by the client on every launch
+    # via addUserToken. Quiet hours and reminder times are local-time concepts,
+    # so the scheduler is wrong for anyone whose zone we don't know — UTC is
+    # the least-bad fallback, not a real answer.
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+
     invite_code: Mapped[str | None] = mapped_column(String(32), unique=True, default=None)
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None

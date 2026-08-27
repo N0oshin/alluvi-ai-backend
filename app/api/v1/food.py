@@ -20,6 +20,7 @@ from sqlalchemy import func, select
 from app.core.config import settings
 from app.core.deps import CurrentUser, Db, not_found
 from app.core.errors import AppError
+from app.core.timeutil import local_date
 from app.db.models import (
     DetectedItem,
     FoodAnalysis,
@@ -534,7 +535,9 @@ async def save_meal(payload: SaveMealRequest, user: CurrentUser, db: Db) -> Meal
         health_score=analysis.health_score,
         calories_edited=edited,
         eaten_at=eaten_at,
-        eaten_on=eaten_at.date(),
+        # The day label lives on the *user's* calendar, not UTC's — a 20:00
+        # dinner in a UTC-7 zone is already tomorrow in UTC.
+        eaten_on=local_date(eaten_at, user.timezone),
         is_favorite=payload.is_favorite,
     )
     db.add(meal)

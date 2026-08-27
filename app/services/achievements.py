@@ -161,7 +161,7 @@ async def _evaluate_meal(db: AsyncSession, user: User, meal: Meal) -> list[Achie
         # import here would be circular.
         from app.api.v1.profile import compute_streak
 
-        streak = await compute_streak(db, user.id)
+        streak = await compute_streak(db, user.id, user.timezone)
         await try_award("streak_7", streak >= 7)
         await try_award("streak_30", streak >= 30)
 
