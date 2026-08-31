@@ -503,7 +503,10 @@ ever logged.
 | `carbsGoal` | integer |  |
 | `fatLeft` | integer |  |
 | `fatGoal` | integer |  |
+| `streak` | `StreakOut` | `{ "days": integer }` — same shape and value as `streak` on `/api/analytics` |
 | `meals` | array of `MealOut` | latest 3 only — "See all" uses GET `/api/meals` |
+
+`streak.days` is consecutive days (in the user's timezone) with at least one meal logged, ending today or yesterday — today not yet logged does not break it. It is always the user's *current* streak, regardless of `day`.
 
 ---
 
