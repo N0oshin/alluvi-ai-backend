@@ -116,6 +116,8 @@ class MacroProgress(CamelModel):
     goal: int
     progress: float
 
+class StreakOut(CamelModel):
+    days: int
 
 class DaySummaryOut(CamelModel):
     """Home dashboard. Every macro is *remaining* against the daily goal, not
@@ -132,6 +134,7 @@ class DaySummaryOut(CamelModel):
     carbs_goal: int
     fat_left: int
     fat_goal: int
+    streak: StreakOut
     meals: list[MealOut] = Field(default_factory=list)
 
 
@@ -192,10 +195,6 @@ class BmiOut(CamelModel):
     # pill colour rather than parsing the label.
     category: str
     category_key: str
-
-
-class StreakOut(CamelModel):
-    days: int
 
 
 class AnalyticsOut(CamelModel):

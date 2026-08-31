@@ -45,6 +45,7 @@ from app.services.vision.resilient import resilient_scan
 from app.schemas.common import MessageResponse
 from app.schemas.food import (
     DaySummaryOut,
+    StreakOut,
     DetectedItemOut,
     FavoriteOut,
     FoodAnalysisOut,
@@ -705,6 +706,8 @@ async def day_summary(
     db: Db,
     day: date | None = Query(default=None),
 ) -> DaySummaryOut:
+    from app.api.v1.profile import compute_streak
+
     target = day or datetime.now(UTC).date()
 
     totals = (
@@ -746,6 +749,7 @@ async def day_summary(
         carbs_goal=c_goal,
         fat_left=max(0, f_goal - consumed_f),
         fat_goal=f_goal,
+        streak=StreakOut(days=await compute_streak(db, user.id, user.timezone)),
         meals=[await _meal_response(db, m) for m in meals],
     )
 

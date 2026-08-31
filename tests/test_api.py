@@ -236,6 +236,8 @@ async def test_analyze_then_save_then_summary(auth_client):
     assert summary["caloriesConsumed"] == meal["calories"]
     # Macros are what's LEFT against the goal, not what was consumed.
     assert summary["caloriesLeft"] == max(0, summary["calorieGoal"] - meal["calories"])
+    # One meal logged today starts a 1-day streak.
+    assert summary["streak"] == {"days": 1}
 
 
 async def test_calories_override_is_recorded(auth_client):
