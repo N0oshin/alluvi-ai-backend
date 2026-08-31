@@ -143,7 +143,7 @@ async def verify_identity_token(token: str, provider: AuthProvider) -> dict[str,
             token,
             key,
             algorithms=["RS256"],
-            options={"verify_aud": False},
+            options={"verify_aud": False, "verify_at_hash": False},
         )
     except JWTError:
         raise _invalid() from None
