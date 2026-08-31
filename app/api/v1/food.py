@@ -10,6 +10,7 @@ returns to the camera. There is deliberately no correction endpoint here.
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -135,8 +136,9 @@ async def analyze_food(
         )
 
     # Downscale + re-encode (which strips EXIF/GPS) before anything else sees it.
+    # CPU-bound PIL work runs off the event loop.
     try:
-        processed, width, height = process_photo(raw)
+        processed, width, height = await asyncio.to_thread(process_photo, raw)
     except ValueError:
         raise AppError("food.bad_image", code="BAD_IMAGE") from None
 
@@ -310,18 +312,26 @@ async def analyze_food_text(
             text_description=payload.description, container=hint
         )
     except VisionAnalysisError as exc:
+        elapsed = int((time.perf_counter() - started) * 1000)
         await log_scan(
             route="text",
             status="error",
             user_id=user.id,
-            latency_ms=int((time.perf_counter() - started) * 1000),
+            latency_ms=elapsed,
+            total_latency_ms=elapsed,
             model_used=settings.GEMINI_MODEL,
             prompt_version=PROMPT_VERSION,
         )
         raise AppError(exc.message_key, code="ANALYSIS_FAILED") from exc
 
     if scan.not_food or not scan.items:
-        await log_scan(route="text", status="not_food", user_id=user.id, meta=meta)
+        await log_scan(
+            route="text",
+            status="not_food",
+            user_id=user.id,
+            meta=meta,
+            total_latency_ms=int((time.perf_counter() - started) * 1000),
+        )
         raise AppError("food.not_food", code="ANALYSIS_FAILED")
 
     result, matched = await price_scan(scan, meta)
@@ -331,6 +341,7 @@ async def analyze_food_text(
         user_id=user.id,
         meta=meta,
         matched_foods=matched,
+        total_latency_ms=int((time.perf_counter() - started) * 1000),
     )
 
     analysis = FoodAnalysis(

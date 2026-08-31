@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -257,7 +258,7 @@ async def upload_profile_photo(
     # Same pipeline as meal photos: downscale + re-encode, which strips
     # EXIF/GPS before the file ever touches disk.
     try:
-        processed, _width, _height = process_photo(raw)
+        processed, _width, _height = await asyncio.to_thread(process_photo, raw)
     except ValueError:
         raise AppError("profile.bad_photo", code="BAD_IMAGE") from None
 

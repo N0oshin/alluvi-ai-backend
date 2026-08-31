@@ -11,6 +11,7 @@ fallback models and caching belong to the caller.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -41,8 +42,9 @@ ANALYSIS_JPEG_QUALITY = 80
 
 # USD per 1M tokens — for the estimated_cost_usd column, so precision is
 # nice-to-have, not load-bearing. Update if Google reprices.
-COST_PER_1M_INPUT = 0.30
-COST_PER_1M_OUTPUT = 2.50
+# Gemini 3.5 Flash paid tier, Aug 2026 (thinking tokens bill as output).
+COST_PER_1M_INPUT = 0.75
+COST_PER_1M_OUTPUT = 4.50
 
 
 @dataclass(slots=True)
@@ -60,6 +62,18 @@ class ScanMeta:
 
 def _load_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
+
+
+# One client for the process: a fresh AsyncClient per scan pays a full TLS
+# handshake to Google every call; a shared one keeps the connection warm.
+_http_client: httpx.AsyncClient | None = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=120.0)
+    return _http_client
 
 
 def resize_for_analysis(image_bytes: bytes) -> bytes:
@@ -104,13 +118,14 @@ class GeminiScanClient:
                 {"text": f"Text mode — no photo. Meal description: {text_description}"}
             )
         if image_bytes is not None:
+            # PIL decode/re-encode is CPU-bound; off the event loop so a big
+            # photo doesn't stall every other in-flight request.
+            resized = await asyncio.to_thread(resize_for_analysis, image_bytes)
             parts.append(
                 {
                     "inline_data": {
                         "mime_type": "image/jpeg",
-                        "data": base64.b64encode(
-                            resize_for_analysis(image_bytes)
-                        ).decode(),
+                        "data": base64.b64encode(resized).decode(),
                     }
                 }
             )
@@ -131,12 +146,11 @@ class GeminiScanClient:
 
         started = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(
-                    API_URL.format(model=self.model),
-                    headers={"x-goog-api-key": self.api_key},
-                    json=body,
-                )
+            resp = await get_http_client().post(
+                API_URL.format(model=self.model),
+                headers={"x-goog-api-key": self.api_key},
+                json=body,
+            )
         except httpx.HTTPError as exc:
             # Timeouts, resets, DNS — transport failures are analysis
             # failures too, not 500s.

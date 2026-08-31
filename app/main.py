@@ -47,6 +47,11 @@ async def lifespan(app: FastAPI):
             reminder_task.cancel()
             with suppress(asyncio.CancelledError):
                 await reminder_task
+        # Close the shared Gemini HTTP client (created lazily on first scan).
+        from app.services.vision import gemini
+
+        if gemini._http_client is not None and not gemini._http_client.is_closed:
+            await gemini._http_client.aclose()
 
 
 app = FastAPI(

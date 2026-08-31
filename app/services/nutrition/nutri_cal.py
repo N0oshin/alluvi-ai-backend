@@ -9,6 +9,8 @@ grams — never from the model directly.
 
 from __future__ import annotations
 
+import asyncio
+
 from app.core.config import settings
 from app.db.models import ScanLog
 from app.db.session import SessionLocal
@@ -21,6 +23,17 @@ from app.services.nutrition.sanity import (
 )
 from app.services.vision.base import DetectedItemResult, FoodAnalysisResult
 from app.services.vision.gemini import ScanMeta
+
+
+# Each item's lookup runs on its own pooled connection; the semaphore keeps a
+# many-item plate from draining the (bounded) pool for other requests.
+_MATCH_CONCURRENCY = asyncio.Semaphore(4)
+
+
+async def _match_one(name: str):
+    async with _MATCH_CONCURRENCY:
+        async with SessionLocal() as db:
+            return await match_food(db, name, limit=1)
 
 
 async def price_scan(
@@ -36,55 +49,59 @@ async def price_scan(
     detected: list[DetectedItemResult] = []
     matched_foods: list[dict] = []
 
-    async with SessionLocal() as db:
-        for item, g in zip(scan.items, grams):
-            matches = await match_food(db, item.name, limit=1)
-            if matches:
-                m = matches[0]
-                p100_kcal, p100_p, p100_c, p100_f = (
-                    m.kcal_100g,
-                    m.protein_100g,
-                    m.carbs_100g,
-                    m.fat_100g,
-                )
-                source, matched_name, score = m.source, m.name, m.score
-            else:
-                f = item.fallback_per_100g
-                p100_kcal, p100_p, p100_c, p100_f = (
-                    f.kcal,
-                    f.protein_g,
-                    f.carbs_g,
-                    f.fat_g,
-                )
-                source, matched_name, score = "model_fallback", None, 0.0
+    # DB lookups are latency-bound (remote Postgres), so items resolve
+    # concurrently instead of one round-trip chain per item.
+    all_matches = await asyncio.gather(
+        *(_match_one(item.name) for item in scan.items)
+    )
 
-            p100_kcal = reconcile_kcal(p100_kcal, p100_p, p100_c, p100_f)
-
-            factor = g / 100.0
-            total_kcal += p100_kcal * factor
-            total_p += p100_p * factor
-            total_c += p100_c * factor
-            total_f += p100_f * factor
-
-            detected.append(
-                DetectedItemResult(
-                    label=item.name,
-                    cx=item.cx,
-                    cy=item.cy,
-                    grams=round(g),
-                    confidence=round(item.confidence, 2),
-                )
+    for item, g, matches in zip(scan.items, grams, all_matches):
+        if matches:
+            m = matches[0]
+            p100_kcal, p100_p, p100_c, p100_f = (
+                m.kcal_100g,
+                m.protein_100g,
+                m.carbs_100g,
+                m.fat_100g,
             )
-            matched_foods.append(
-                {
-                    "query": item.name,
-                    "source": source,
-                    "matched": matched_name,
-                    "score": round(score, 3),
-                    "grams": round(g, 1),
-                    "kcal": round(p100_kcal * factor, 1),
-                }
+            source, matched_name, score = m.source, m.name, m.score
+        else:
+            f = item.fallback_per_100g
+            p100_kcal, p100_p, p100_c, p100_f = (
+                f.kcal,
+                f.protein_g,
+                f.carbs_g,
+                f.fat_g,
             )
+            source, matched_name, score = "model_fallback", None, 0.0
+
+        p100_kcal = reconcile_kcal(p100_kcal, p100_p, p100_c, p100_f)
+
+        factor = g / 100.0
+        total_kcal += p100_kcal * factor
+        total_p += p100_p * factor
+        total_c += p100_c * factor
+        total_f += p100_f * factor
+
+        detected.append(
+            DetectedItemResult(
+                label=item.name,
+                cx=item.cx,
+                cy=item.cy,
+                grams=round(g),
+                confidence=round(item.confidence, 2),
+            )
+        )
+        matched_foods.append(
+            {
+                "query": item.name,
+                "source": source,
+                "matched": matched_name,
+                "score": round(score, 3),
+                "grams": round(g, 1),
+                "kcal": round(p100_kcal * factor, 1),
+            }
+        )
 
     result = FoodAnalysisResult(
         name=scan.dish_name or scan.items[0].name.title(),
@@ -148,6 +165,7 @@ async def log_scan(
     meta: ScanMeta | None = None,
     matched_foods: list[dict] | None = None,
     latency_ms: int | None = None,
+    total_latency_ms: int | None = None,
     model_used: str | None = None,
     prompt_version: str | None = None,
 ) -> None:
@@ -169,6 +187,7 @@ async def log_scan(
                     raw_model_output=meta.raw_output if meta else None,
                     matched_foods=matched_foods,
                     latency_ms=meta.latency_ms if meta else latency_ms,
+                    total_latency_ms=total_latency_ms,
                     estimated_cost_usd=meta.estimated_cost_usd if meta else None,
                     status=status,
                 )

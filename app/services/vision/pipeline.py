@@ -39,6 +39,9 @@ class PipelineVisionProvider(VisionProvider):
         image_sha = hashlib.sha256(image_bytes).hexdigest()
         started = time.perf_counter()
 
+        def elapsed_ms() -> int:
+            return int((time.perf_counter() - started) * 1000)
+
         cached = await cached_scan(image_sha)
         if cached is not None:
             scan, meta = cached
@@ -50,6 +53,7 @@ class PipelineVisionProvider(VisionProvider):
                 user_id=user_id,
                 meta=meta,
                 matched_foods=matched_foods,
+                total_latency_ms=elapsed_ms(),
             )
             return result
 
@@ -63,7 +67,8 @@ class PipelineVisionProvider(VisionProvider):
                 image_sha256=image_sha,
                 status="error",
                 user_id=user_id,
-                latency_ms=int((time.perf_counter() - started) * 1000),
+                latency_ms=elapsed_ms(),
+                total_latency_ms=elapsed_ms(),
                 model_used=settings.GEMINI_MODEL,
                 prompt_version=PROMPT_VERSION,
             )
@@ -76,6 +81,7 @@ class PipelineVisionProvider(VisionProvider):
                 status="not_food",
                 user_id=user_id,
                 meta=meta,
+                total_latency_ms=elapsed_ms(),
             )
             raise NotFoodError()
 
@@ -87,5 +93,6 @@ class PipelineVisionProvider(VisionProvider):
             user_id=user_id,
             meta=meta,
             matched_foods=matched_foods,
+            total_latency_ms=elapsed_ms(),
         )
         return result

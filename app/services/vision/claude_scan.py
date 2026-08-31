@@ -8,6 +8,7 @@ the old single-model contract; this one speaks the pipeline's ScanResult.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import time
@@ -27,6 +28,18 @@ from app.services.vision.gemini import (
 # USD per 1M tokens (Haiku 4.5). Informational, for the cost column.
 COST_PER_1M_INPUT = 1.00
 COST_PER_1M_OUTPUT = 5.00
+
+# Shared per api_key so the fallback reuses its TLS connection too.
+_clients: dict[str, object] = {}
+
+
+def _get_client(api_key: str):
+    import anthropic
+
+    client = _clients.get(api_key)
+    if client is None:
+        client = _clients[api_key] = anthropic.AsyncAnthropic(api_key=api_key)
+    return client
 
 
 class ClaudeScanClient:
@@ -72,22 +85,21 @@ class ClaudeScanClient:
                 }
             )
         if image_bytes is not None:
+            resized = await asyncio.to_thread(resize_for_analysis, image_bytes)
             content.append(
                 {
                     "type": "image",
                     "source": {
                         "type": "base64",
                         "media_type": "image/jpeg",
-                        "data": base64.b64encode(
-                            resize_for_analysis(image_bytes)
-                        ).decode(),
+                        "data": base64.b64encode(resized).decode(),
                     },
                 }
             )
         if not any(c["type"] == "text" for c in content):
             content.append({"type": "text", "text": "Analyse this meal photo."})
 
-        client = anthropic.AsyncAnthropic(api_key=self.api_key)
+        client = _get_client(self.api_key)
         started = time.perf_counter()
         try:
             msg = await client.messages.create(

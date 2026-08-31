@@ -632,5 +632,8 @@ class ScanLog(UUIDPrimaryKey, Timestamps, Base):
     raw_model_output: Mapped[dict | None] = mapped_column(PortableJSON, default=None)
     matched_foods: Mapped[list | None] = mapped_column(PortableJSON, default=None)
     latency_ms: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Wall-clock for the whole analysis (upload excluded), vs latency_ms which
+    # is the model call alone — the gap between them is our own overhead.
+    total_latency_ms: Mapped[int | None] = mapped_column(Integer, default=None)
     estimated_cost_usd: Mapped[float | None] = mapped_column(Float, default=None)
     status: Mapped[str] = mapped_column(String(16), default="ok")
