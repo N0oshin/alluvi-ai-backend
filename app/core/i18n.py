@@ -86,10 +86,6 @@ _MESSAGES: dict[str, dict[Lang, str]] = {
         Lang.EN: "Sign-in with this provider isn't available right now. Please try again shortly.",
         Lang.AR: "تسجيل الدخول عبر هذا المزود غير متاح حاليًا. برجاء المحاولة بعد قليل.",
     },
-    "auth.reset_invalid": {
-        Lang.EN: "This reset link is no longer valid. Request a new one.",
-        Lang.AR: "رابط إعادة التعيين لم يعد صالحًا. اطلب رابطًا جديدًا.",
-    },
     # --- generic resource ---
     "resource.not_found": {
         Lang.EN: "We couldn't find what you were looking for.",

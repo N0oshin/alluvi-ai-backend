@@ -118,7 +118,3 @@ def generate_otp() -> str:
 def hash_otp(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
-
-def generate_reset_token() -> str:
-    """Password reset is a link, not a code — this rides in the deep link."""
-    return secrets.token_urlsafe(32)

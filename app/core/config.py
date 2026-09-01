@@ -81,10 +81,6 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str | None = None
     EMAIL_FROM: str = "Alluvi <onboarding@resend.dev>"
     EMAIL_TIMEOUT_SECONDS: float = 10.0
-    # The reset link mailed to users. The token is appended as `?token=`.
-    PASSWORD_RESET_URL: str = "https://alluvi.dev/reset-password"
-    PASSWORD_RESET_TTL_HOURS: int = 1
-
     # --- push notifications ---
     # "console" -> written to the log, no network, no key; the dev default and
     #              what the tests run against.
