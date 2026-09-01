@@ -13,6 +13,7 @@ Error responses share one envelope — see [Errors](#errors) below — and are n
 | Header | Applies to | Notes |
 | --- | --- | --- |
 | `Authorization` | endpoints marked Auth: **Yes** | `Bearer <accessToken>` |
+| `X-Timezone` | every authenticated request (set it as a default header on the HTTP client) | The device's IANA zone name, e.g. `Australia/Sydney`. Updates the profile timezone whenever it differs, which drives every local-day/time value the API returns: meal `time`, `eatenOn` and auto `mealType`, the `/api/home/summary` day, streaks, and reminder scheduling. Absent or unknown → profile timezone unchanged (default `UTC`). Does not depend on notification permission |
 | `langCode` | every endpoint | `1` selects Arabic. Any other value, or the header being absent, selects English. This is **not** `Accept-Language` — that header is ignored. It controls error `detail` text, the BMI category label in `/api/analytics`, and which language `/api/legal/*` returns |
 
 ## Resolving `imageUrl`
@@ -203,7 +204,6 @@ The reply is generic whether or not the address exists — never surface it as c
 
 **Response** — `MessageResponse` (`message`: string).
 
-Checks a reset code **without consuming it**, so the code-entry screen can reject a wrong code before asking for a new password. Does **not** issue a session or mark the email verified — that is what makes it different from `verifyCode`, which must not be used for reset codes. Wrong attempts count toward the same 5-attempt lock-out. Errors: `OTP_INVALID` (wrong code, no outstanding reset code, or unknown email), `OTP_EXPIRED`.
 
 ---
 
@@ -363,8 +363,8 @@ Server configuration: these endpoints answer 501 `SOCIAL_AUTH_NOT_CONFIGURED` un
 | --- | --- | --- |
 | `analysisId` | UUID |  |
 | `name` | string |  |
-| `timeLabel` | string | `"HH:MM"` |
-| `mealTypeLabel` | string | e.g. `"LUNCH"` |
+| `timeLabel` | string | `"HH:MM"`, 24h, in the user's timezone |
+| `mealTypeLabel` | string | e.g. `"LUNCH"`, from the user's local hour |
 | `caloriesPerServing` | integer |  |
 | `proteinGramsPerServing` | integer |  |
 | `carbsGramsPerServing` | integer |  |
@@ -448,12 +448,20 @@ Packaged-product lookup by barcode digits (e.g. EAN-13). **No AI involved** — 
 | `proteinGrams` | integer |
 | `carbsGrams` | integer |
 | `fatGrams` | integer |
-| `time` | string (`"HH:MM"`) |
-| `mealType` | string |
+| `time` | string (`"HH:MM"`, 24h, **in the user's timezone**) |
+| `mealType` | string (breakfast/lunch/dinner/snack, derived from the user's local hour unless set explicitly) |
 | `healthScore` | integer |
 | `isFavorite` | boolean |
-| `eatenAt` | datetime |
+| `eatenAt` | datetime (UTC instant, ISO 8601 with `Z`) |
+| `eatenOn` | date (`"YYYY-MM-DD"`, **the user-local calendar day this meal belongs to**) |
 | `newlyUnlocked` | array of `AchievementOut` |
+
+**Timezone rules.** `eatenAt` is the canonical UTC instant; do not derive the
+day or the display time from it. Group meals by `eatenOn` and show `time`
+verbatim — both are computed server-side in the user's timezone, which is the
+same calendar `/api/home/summary`, the `day` query filter, and the calendar
+counts use. The user's timezone comes from the `X-Timezone` request header (see
+Headers); until the app sends it, the profile defaults to `UTC`.
 
 `newlyUnlocked` lists the badges this save just earned (empty otherwise, and
 always empty on the other endpoints that return `MealOut`) — show the
@@ -473,7 +481,9 @@ always empty on the other endpoints that return `MealOut`) — show the
 
 **Response** — array of `MealOut` (see above), newest first. Backs the
 "See all" screen: with no `day` it pages through every meal the user has
-ever logged.
+ever logged. The list is flat but sorted by `eatenAt` desc, so meals with the
+same `eatenOn` are contiguous — bucket on `eatenOn` client-side to render
+day headers. `day` is matched against `eatenOn`.
 
 ---
 
@@ -896,6 +906,7 @@ Both endpoints return a **bare JSON boolean**, not an envelope — the shipped c
 | Field | Type | Notes |
 | --- | --- | --- |
 | `token` | string | 1–512 chars; APNs or FCM |
+| `timezone` | string \| null | Optional IANA zone name. Legacy: the `X-Timezone` header (see Headers) is the preferred mechanism, since this endpoint is only reached when push permission was granted. Unknown names are ignored |
 
 **Response** — boolean (`true`)
 
