@@ -50,10 +50,9 @@ In production these become absolute pre-signed object-storage URLs. Clients must
 | `EMAIL_TAKEN` | 409 | SignUp, personalDetails | Address already registered |
 | `INVALID_CREDENTIALS` | 401 | login | Wrong email *or* wrong password — deliberately indistinguishable |
 | `EMAIL_NOT_VERIFIED` | 409 | login | Address not yet verified. A fresh code has been sent; route the user to the code screen. 409 not 403 so the client does not wipe the session |
-| `OTP_INVALID` | 400 | verifyCode | Wrong code, or no outstanding code |
-| `OTP_EXPIRED` | 400 | verifyCode | Code expired, or too many wrong attempts — request a new one |
+| `OTP_INVALID` | 400 | verifyCode, resetPassword | Wrong code, no outstanding code, or (resetPassword) unknown email — deliberately indistinguishable |
+| `OTP_EXPIRED` | 400 | verifyCode, resetPassword | Code expired, or too many wrong attempts — request a new one |
 | `OTP_COOLDOWN` | 429 | resendCode | A code was already sent within the cooldown window (60s default) |
-| `RESET_INVALID` | 400 | resetPassword | Reset token invalid, expired, or already used |
 | `INVALID_REFRESH` | 401 | refresh | Refresh token unknown or malformed → log the user out |
 | `REFRESH_EXPIRED` | 401 | refresh | Refresh token past its 30-day life → log the user out |
 | `REFRESH_REUSED` | 401 | refresh | A consumed token was replayed. **The whole token family is revoked** → log the user out |
@@ -187,9 +186,9 @@ Generic reply regardless of whether the address exists. 429 `OTP_COOLDOWN` if re
 | --- | --- |
 | `email` | string (email) |
 
-**Response** — `MessageResponse` (`message`: string). Emails a reset **link**, not a code.
+**Response** — `MessageResponse` (`message`: string). Emails a **6-digit reset code** (10 min TTL, same shape as the sign-up code). Route the user to the code-entry screen, then to a new-password form.
 
-The reply is generic whether or not the address exists — never surface it as confirmation that an account was found. 429 `RATE_LIMITED` after 3 requests per hour for one address, or 10 per hour from one IP.
+The reply is generic whether or not the address exists — never surface it as confirmation that an account was found. 429 `RATE_LIMITED` after 3 requests per hour for one address, or 10 per hour from one IP. To "resend" a reset code, call this endpoint again (it retires the previous reset code); `resendCode` is for sign-up verification only.
 
 ---
 
@@ -199,10 +198,13 @@ The reply is generic whether or not the address exists — never surface it as c
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `token` | string | from the emailed link |
+| `email` | string (email) | the address the code was sent to |
+| `code` | string | the 6-digit code from the email |
 | `password` | string | same policy as sign-up |
 
-**Response** — `MessageResponse` (`message`: string). Revokes every existing session.
+**Response** — `MessageResponse` (`message`: string). Sets the new password, marks the email verified, consumes the code, and revokes every existing session — the client should send the user back to Sign In.
+
+Errors: `WEAK_PASSWORD` (422), `OTP_INVALID` / `OTP_EXPIRED` (400). A sign-up verification code is **not** accepted here, and a reset code is not accepted by `verifyCode`. After 5 wrong codes the code is locked (`OTP_EXPIRED`) and the user must request a new one.
 
 ---
 
