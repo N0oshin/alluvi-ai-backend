@@ -100,6 +100,7 @@ class MealOut(CamelModel):
     health_score: int
     is_favorite: bool
     eaten_at: datetime
+    eaten_on: date
     newly_unlocked: list[AchievementOut] = Field(default_factory=list)
 
 

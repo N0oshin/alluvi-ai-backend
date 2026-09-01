@@ -11,12 +11,11 @@ both are stored in the same column without interpretation.
 
 from __future__ import annotations
 
-from zoneinfo import ZoneInfo
-
 from fastapi import APIRouter
 from sqlalchemy import select
 
 from app.core.deps import CurrentUser, Db
+from app.core.timeutil import is_valid_tz
 from app.db.models import DeviceToken
 from app.schemas.profile import DeviceTokenRequest
 
@@ -48,15 +47,12 @@ async def add_user_token(
         # Claim a token that was registered anonymously before sign-in.
         existing.user_id = user.id
 
-    # The app calls this on every launch, so it doubles as the timezone
-    # heartbeat — reminders follow the user when they travel. An unknown zone
-    # name is dropped rather than failing the registration.
+    # Legacy timezone path (only reached when the user granted push
+    # permission). The X-Timezone request header is the primary mechanism —
+    # see get_current_user. An unknown zone name is dropped rather than
+    # failing the registration.
     if payload.timezone and payload.timezone != user.timezone:
-        try:
-            ZoneInfo(payload.timezone)
-        except (KeyError, ValueError):
-            pass
-        else:
+        if is_valid_tz(payload.timezone):
             user.timezone = payload.timezone
 
     await db.flush()

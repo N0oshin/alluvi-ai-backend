@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 from app.core.config import settings
 from app.core.deps import CurrentUser, Db, not_found
 from app.core.errors import AppError
-from app.core.timeutil import local_date
+from app.core.timeutil import local_date, user_tz
 from app.db.models import (
     DetectedItem,
     FoodAnalysis,
@@ -31,6 +31,7 @@ from app.db.models import (
     NutritionPlan,
     OffProduct,
     PortionConfidence,
+    User,
 )
 from app.services.nutrition.nutri_cal import (
     health_score_from_macros,
@@ -70,8 +71,9 @@ router = APIRouter(tags=["food"])
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 
 
-def _meal_type_for(moment: datetime) -> MealType:
-    hour = moment.astimezone(UTC).hour
+def _meal_type_for(moment: datetime, tz_name: str) -> MealType:
+    """Breakfast/lunch/dinner is a local-clock concept: use the user's hour."""
+    hour = moment.astimezone(user_tz(tz_name)).hour
     if hour < 11:
         return MealType.breakfast
     if hour < 16:
@@ -107,9 +109,10 @@ async def _enforce_scan_limit(db: Db, user_id: uuid.UUID) -> None:
         )
 
 
-def _format_time(moment: datetime) -> str:
-    """ "12:07" — 24h avoids the %-I directive, which is not portable to Windows."""
-    return moment.astimezone(UTC).strftime("%H:%M")
+def _format_time(moment: datetime, tz_name: str) -> str:
+    """ "12:07" in the user's timezone — 24h avoids the %-I directive, which
+    is not portable to Windows."""
+    return moment.astimezone(user_tz(tz_name)).strftime("%H:%M")
 
 
 # --------------------------------------------------------------------------
@@ -211,8 +214,8 @@ async def analyze_food(
     return FoodAnalysisOut(
         analysis_id=analysis.id,
         name=result.name,
-        time_label=_format_time(now),
-        meal_type_label=_meal_type_for(now).value.upper(),
+        time_label=_format_time(now, user.timezone),
+        meal_type_label=_meal_type_for(now, user.timezone).value.upper(),
         calories_per_serving=result.calories_per_serving,
         protein_grams_per_serving=result.protein_g_per_serving,
         carbs_grams_per_serving=result.carbs_g_per_serving,
@@ -250,19 +253,19 @@ async def analyze_food(
 
 async def _respond_for_analysis(
     db: Db,
-    user_id: uuid.UUID,
+    user: User,
     analysis: FoodAnalysis,
     result_items: list,
     image_url: str | None,
 ) -> FoodAnalysisOut:
     """FoodAnalysisOut for a freshly persisted analysis (non-photo routes)."""
-    plan = await _active_plan(db, user_id)
+    plan = await _active_plan(db, user.id)
     now = datetime.now(UTC)
     return FoodAnalysisOut(
         analysis_id=analysis.id,
         name=analysis.name,
-        time_label=_format_time(now),
-        meal_type_label=_meal_type_for(now).value.upper(),
+        time_label=_format_time(now, user.timezone),
+        meal_type_label=_meal_type_for(now, user.timezone).value.upper(),
         calories_per_serving=analysis.calories_per_serving,
         protein_grams_per_serving=analysis.protein_g_per_serving,
         carbs_grams_per_serving=analysis.carbs_g_per_serving,
@@ -373,7 +376,7 @@ async def analyze_food_text(
     await db.flush()
 
     return await _respond_for_analysis(
-        db, user.id, analysis, result.detected_items, image_url=None
+        db, user, analysis, result.detected_items, image_url=None
     )
 
 
@@ -452,7 +455,7 @@ async def analyze_barcode(code: str, user: CurrentUser, db: Db) -> FoodAnalysisO
 
     return await _respond_for_analysis(
         db,
-        user.id,
+        user,
         analysis,
         [
             DetectedItemResult(
@@ -526,7 +529,7 @@ async def save_meal(payload: SaveMealRequest, user: CurrentUser, db: Db) -> Meal
     if eaten_at.tzinfo is None:
         eaten_at = eaten_at.replace(tzinfo=UTC)
 
-    meal_type = _meal_type_for(eaten_at)
+    meal_type = _meal_type_for(eaten_at, user.timezone)
     if payload.meal_type:
         try:
             meal_type = MealType(payload.meal_type.lower())
@@ -561,7 +564,7 @@ async def save_meal(payload: SaveMealRequest, user: CurrentUser, db: Db) -> Meal
     # Best-effort: a badge bug must never break saving (see the service).
     newly = await on_meal_saved(db, user, meal)
 
-    response = await _meal_response(db, meal)
+    response = await _meal_response(db, meal, user.timezone)
     response.newly_unlocked = [
         AchievementOut(
             id=a.id, key=a.key, label=a.label, icon_key=a.icon_key, unlocked=True
@@ -571,7 +574,8 @@ async def save_meal(payload: SaveMealRequest, user: CurrentUser, db: Db) -> Meal
     return response
 
 
-async def _meal_response(db: Db, meal: Meal) -> MealOut:
+async def _meal_response(db: Db, meal: Meal, tz_name: str) -> MealOut:
+    """`time`/`eaten_on` are in the user's timezone; `eaten_at` stays UTC."""
     image_url = ""
     if meal.photo_id:
         photo = await db.scalar(select(MealPhoto).where(MealPhoto.id == meal.photo_id))
@@ -586,11 +590,12 @@ async def _meal_response(db: Db, meal: Meal) -> MealOut:
         protein_grams=meal.protein_g,
         carbs_grams=meal.carbs_g,
         fat_grams=meal.fat_g,
-        time=_format_time(meal.eaten_at),
+        time=_format_time(meal.eaten_at, tz_name),
         meal_type=meal.meal_type.value,
         health_score=meal.health_score,
         is_favorite=meal.is_favorite,
         eaten_at=meal.eaten_at,
+        eaten_on=meal.eaten_on,
     )
 
 
@@ -615,7 +620,7 @@ async def list_meals(
             query.order_by(Meal.eaten_at.desc()).limit(limit).offset(offset)
         )
     ).all()
-    return [await _meal_response(db, m) for m in meals]
+    return [await _meal_response(db, m, user.timezone) for m in meals]
 
 
 @router.patch("/meals/{meal_id}", response_model=MealOut)
@@ -672,7 +677,7 @@ async def update_meal(
             pass
 
     await db.flush()
-    return await _meal_response(db, meal)
+    return await _meal_response(db, meal, user.timezone)
 
 
 @router.delete("/meals/{meal_id}", response_model=MessageResponse)
@@ -750,7 +755,7 @@ async def day_summary(
         fat_left=max(0, f_goal - consumed_f),
         fat_goal=f_goal,
         streak=StreakOut(days=await compute_streak(db, user.id, user.timezone)),
-        meals=[await _meal_response(db, m) for m in meals],
+        meals=[await _meal_response(db, m, user.timezone) for m in meals],
     )
 
 

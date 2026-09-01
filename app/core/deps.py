@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.core.i18n import Lang, lang_from_request
 from app.core.security import decode_access_token
+from app.core.timeutil import is_valid_tz
 from app.db.models import User
 from app.db.session import get_db
 
@@ -56,7 +57,11 @@ def not_found() -> AppError:
     )
 
 
+TIMEZONE_HEADER = "X-Timezone"
+
+
 async def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
@@ -75,6 +80,15 @@ async def get_current_user(
     user = await db.scalar(select(User).where(User.id == user_id))
     if user is None or user.deleted_at is not None:
         raise _unauthorized()
+
+    # Timezone heartbeat: the client sends its IANA zone on every request, so
+    # local-day concepts (meal eatenOn/time, streaks, reminders) follow the
+    # user wherever they are — independent of push-notification permission,
+    # which is what gates the older addUserToken path. Unknown names are
+    # ignored; the write rides the request's own commit.
+    tz = (request.headers.get(TIMEZONE_HEADER) or "").strip()
+    if tz and tz != user.timezone and is_valid_tz(tz):
+        user.timezone = tz
     return user
 
 

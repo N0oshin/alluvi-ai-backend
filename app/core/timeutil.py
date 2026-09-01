@@ -47,3 +47,12 @@ def local_date(value: datetime, tz_name: str) -> date:
 
 def local_today(tz_name: str) -> date:
     return local_date(utcnow(), tz_name)
+
+
+def is_valid_tz(tz_name: str) -> bool:
+    """True for a known IANA zone name ("Australia/Sydney")."""
+    try:
+        ZoneInfo(tz_name)
+    except (KeyError, ValueError):
+        return False
+    return True

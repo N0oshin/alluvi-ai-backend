@@ -783,3 +783,57 @@ async def test_profile_photo_rejects_garbage(auth_client):
     )
     assert resp.status_code == 400
     assert resp.json()["code"] == "BAD_IMAGE"
+
+
+async def test_meal_time_and_day_are_in_user_timezone(auth_client: AsyncClient):
+    """`time`, `mealType` and `eatenOn` follow the profile timezone, not UTC.
+    20:00 UTC on 31 Aug is 06:00 on 1 Sep in Sydney — breakfast, tomorrow."""
+    # Any authenticated call carrying X-Timezone updates the profile zone.
+    ping = await auth_client.get(
+        "/api/meals", headers={"X-Timezone": "Australia/Sydney"}
+    )
+    assert ping.status_code == 200, ping.text
+
+    analyze = await auth_client.post(
+        "/api/food/analyze",
+        files={"image": ("m.png", _png_bytes((10, 20, 30)), "image/png")},
+    )
+    analysis_id = analyze.json()["analysisId"]
+
+    saved = await auth_client.post(
+        "/api/meals",
+        json={
+            "analysisId": analysis_id,
+            "quantity": 1,
+            "eatenAt": "2026-08-31T20:00:00Z",
+        },
+    )
+    assert saved.status_code == 201, saved.text
+    meal = saved.json()
+    assert meal["eatenOn"] == "2026-09-01"
+    assert meal["time"] == "06:00"
+    assert meal["mealType"] == "breakfast"
+    assert meal["eatenAt"].startswith("2026-08-31T20:00:00")
+
+    listed = await auth_client.get("/api/meals", params={"day": "2026-09-01"})
+    assert [m["id"] for m in listed.json()] == [meal["id"]]
+    assert (await auth_client.get("/api/meals", params={"day": "2026-08-31"})).json() == []
+
+
+async def test_unknown_timezone_header_is_ignored(auth_client: AsyncClient):
+    ok = await auth_client.get("/api/meals", headers={"X-Timezone": "Australia/Sydney"})
+    assert ok.status_code == 200
+    bad = await auth_client.get("/api/meals", headers={"X-Timezone": "Mars/Olympus"})
+    assert bad.status_code == 200
+
+    analyze = await auth_client.post(
+        "/api/food/analyze",
+        files={"image": ("m.png", _png_bytes((10, 20, 30)), "image/png")},
+    )
+    saved = await auth_client.post(
+        "/api/meals",
+        json={"analysisId": analyze.json()["analysisId"], "quantity": 1,
+              "eatenAt": "2026-08-31T20:00:00Z"},
+    )
+    # Still Sydney: the bogus header did not reset the zone to UTC.
+    assert saved.json()["eatenOn"] == "2026-09-01"
