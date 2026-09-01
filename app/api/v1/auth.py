@@ -1,11 +1,4 @@
 """Authentication.
-
-Covers Figma screens 13-16 (Sign In / Email Sign In / Create Account / Forgot
-Password), 20 (Verify Code) and 35 (Delete Account).
-
-Two distinct recovery mechanisms, per the design:
-  * Sign-up verification uses a **6-digit code** emailed to the user.
-  * Password reset uses an emailed **link** carrying an opaque token.
 """
 
 from __future__ import annotations
@@ -36,7 +29,6 @@ from app.core.security import (
     create_access_token,
     generate_otp,
     generate_refresh_token,
-    generate_reset_token,
     hash_otp,
     hash_password,
     hash_refresh_token,
@@ -49,7 +41,6 @@ from app.db.models import (
     NotificationSettings,
     OtpCode,
     OtpPurpose,
-    PasswordResetToken,
     RefreshToken,
     User,
 )
@@ -149,30 +140,76 @@ async def _send_email(message: EmailMessage) -> None:
         ) from exc
 
 
-async def _issue_otp(db: Db, user: User) -> str:
-    """Invalidate outstanding codes and mint a fresh one."""
+async def _issue_otp(
+    db: Db, user: User, *, purpose: OtpPurpose = OtpPurpose.verify_email
+) -> str:
     await db.execute(
         update(OtpCode)
-        .where(OtpCode.user_id == user.id, OtpCode.consumed_at.is_(None))
+        .where(
+            OtpCode.user_id == user.id,
+            OtpCode.purpose == purpose,
+            OtpCode.consumed_at.is_(None),
+        )
         .values(consumed_at=datetime.now(UTC))
     )
     code = generate_otp()
     db.add(
         OtpCode(
             user_id=user.id,
-            purpose=OtpPurpose.verify_email,
+            purpose=purpose,
             code_hash=hash_otp(code),
             expires_at=datetime.now(UTC)
             + timedelta(minutes=settings.OTP_TTL_MINUTES),
         )
     )
     await db.flush()
+    template = (
+        password_reset_email
+        if purpose is OtpPurpose.reset_password
+        else verification_email
+    )
     await _send_email(
-        verification_email(
-            user.email, code=code, ttl_minutes=settings.OTP_TTL_MINUTES
-        )
+        template(user.email, code=code, ttl_minutes=settings.OTP_TTL_MINUTES)
     )
     return code
+
+
+async def _check_otp(db: Db, user: User, code: str, purpose: OtpPurpose) -> OtpCode:
+    """
+    Find the user's newest unused code for this purpose.
+    No code? → OTP_INVALID
+    Expired? → OTP_EXPIRED
+    Too many wrong tries already? → lock it, OTP_EXPIRED
+    Wrong code? → count the attempt, OTP_INVALID
+    Otherwise return the code row so the caller can mark it used.
+    """
+    otp = await db.scalar(
+        select(OtpCode)
+        .where(
+            OtpCode.user_id == user.id,
+            OtpCode.purpose == purpose,
+            OtpCode.consumed_at.is_(None),
+        )
+        .order_by(OtpCode.created_at.desc())
+        .limit(1)
+    )
+    if otp is None:
+        raise AppError("auth.otp_invalid", code="OTP_INVALID")
+
+    if ensure_utc(otp.expires_at) < datetime.now(UTC):
+        raise AppError("auth.otp_expired", code="OTP_EXPIRED")
+
+    if otp.attempts >= settings.OTP_MAX_ATTEMPTS:
+        otp.consumed_at = datetime.now(UTC)
+        await db.commit()
+        raise AppError("auth.otp_expired", code="OTP_EXPIRED")
+
+    if otp.code_hash != hash_otp(code):
+        otp.attempts += 1
+        await db.commit()
+        raise AppError("auth.otp_invalid", code="OTP_INVALID")
+
+    return otp
 
 
 _USERNAME_UNSAFE = re.compile(r"[^a-z0-9._-]")
@@ -320,26 +357,7 @@ async def verify_code(payload: VerifyCodeRequest, db: Db) -> TokenResponse:
             code="OTP_INVALID",
         )
 
-    otp = await db.scalar(
-        select(OtpCode)
-        .where(OtpCode.user_id == user.id, OtpCode.consumed_at.is_(None))
-        .order_by(OtpCode.created_at.desc())
-        .limit(1)
-    )
-    if otp is None:
-        raise AppError("auth.otp_invalid", code="OTP_INVALID")
-
-    if ensure_utc(otp.expires_at) < datetime.now(UTC):
-        raise AppError("auth.otp_expired", code="OTP_EXPIRED")
-
-    if otp.attempts >= settings.OTP_MAX_ATTEMPTS:
-        otp.consumed_at = datetime.now(UTC)
-        raise AppError("auth.otp_expired", code="OTP_EXPIRED")
-
-    if otp.code_hash != hash_otp(payload.code):
-        otp.attempts += 1
-        raise AppError("auth.otp_invalid", code="OTP_INVALID")
-
+    otp = await _check_otp(db, user, payload.code, OtpPurpose.verify_email)
     otp.consumed_at = datetime.now(UTC)
     user.email_verified = True
     await db.flush()
@@ -378,7 +396,7 @@ async def resend_code(payload: ResendCodeRequest, db: Db) -> MessageResponse:
 async def forgot_password(
     payload: ForgotPasswordRequest, db: Db, request: Request
 ) -> MessageResponse:
-    """Emails a reset **link**, not a code (Figma screen 16)."""
+    """Emails a 6-digit reset code."""
     # Limited even for unknown addresses — the response never reveals whether
     # the email exists, and neither should the rate limiter's behaviour.
     enforce(forgot_by_ip, client_ip(request))
@@ -386,28 +404,12 @@ async def forgot_password(
 
     user = await db.scalar(select(User).where(User.email == payload.email.lower()))
     generic = MessageResponse(
-        message="If that email is registered, a reset link is on its way."
+        message="If that email is registered, a reset code is on its way."
     )
     if user is None or user.deleted_at is not None:
         return generic
 
-    raw = generate_reset_token()
-    db.add(
-        PasswordResetToken(
-            user_id=user.id,
-            token_hash=hash_refresh_token(raw),
-            expires_at=datetime.now(UTC)
-            + timedelta(hours=settings.PASSWORD_RESET_TTL_HOURS),
-        )
-    )
-    await db.flush()
-    await _send_email(
-        password_reset_email(
-            user.email,
-            url=f"{settings.PASSWORD_RESET_URL}?token={raw}",
-            ttl_hours=settings.PASSWORD_RESET_TTL_HOURS,
-        )
-    )
+    await _issue_otp(db, user, purpose=OtpPurpose.reset_password)
     return generic
 
 
@@ -415,22 +417,17 @@ async def forgot_password(
 async def reset_password(payload: ResetPasswordRequest, db: Db) -> MessageResponse:
     _ensure_password_policy(payload.password)
 
-    record = await db.scalar(
-        select(PasswordResetToken).where(
-            PasswordResetToken.token_hash == hash_refresh_token(payload.token),
-            PasswordResetToken.consumed_at.is_(None),
-        )
-    )
-    if record is None or ensure_utc(record.expires_at) < datetime.now(UTC):
-        raise AppError("auth.reset_invalid", code="RESET_INVALID")
+    user = await db.scalar(select(User).where(User.email == payload.email.lower()))
+    # Unknown address answers exactly like a wrong code: this endpoint must
+    # not become the account-enumeration oracle that forgotPassword avoids.
+    if user is None or user.deleted_at is not None:
+        raise AppError("auth.otp_invalid", code="OTP_INVALID")
 
-    user = await db.scalar(select(User).where(User.id == record.user_id))
-    if user is None:
-        raise AppError("auth.reset_invalid", code="RESET_INVALID")
-
+    otp = await _check_otp(db, user, payload.code, OtpPurpose.reset_password)
+    otp.consumed_at = datetime.now(UTC)
     user.password_hash = hash_password(payload.password)
+    # Proving control of the inbox verifies the address as a side effect.
     user.email_verified = True
-    record.consumed_at = datetime.now(UTC)
     # A password reset invalidates every existing session.
     await _revoke_all_for_user(db, user.id)
     await db.flush()
