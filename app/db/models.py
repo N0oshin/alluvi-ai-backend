@@ -93,6 +93,7 @@ class WeightSource(str, enum.Enum):
 
 class OtpPurpose(str, enum.Enum):
     verify_email = "verify_email"
+    reset_password = "reset_password"
 
 
 # --------------------------------------------------------------------------
@@ -205,21 +206,6 @@ class OtpCode(UUIDPrimaryKey, Timestamps, Base):
     code_hash: Mapped[str] = mapped_column(String(64))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     attempts: Mapped[int] = mapped_column(Integer, default=0)
-    consumed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
-
-
-class PasswordResetToken(UUIDPrimaryKey, Timestamps, Base):
-    """Password recovery is a *link*, not a code (Figma screen 16)."""
-
-    __tablename__ = "password_reset_tokens"
-
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )

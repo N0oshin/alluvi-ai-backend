@@ -32,7 +32,10 @@ class ForgotPasswordRequest(CamelModel):
 
 
 class ResetPasswordRequest(CamelModel):
-    token: str
+    """Completes a reset with the 6-digit code from `forgotPassword`."""
+
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=6)
     password: str
 
 
