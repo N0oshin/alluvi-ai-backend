@@ -234,3 +234,55 @@ async def test_verify_code_attempts_are_persisted_too(client, sent):
     resp = await client.post("/api/Auth/verifyCode", json={"email": email, "code": code})
     assert resp.status_code == 400
     assert resp.json()["code"] == "OTP_EXPIRED"
+
+
+async def test_verify_reset_code_checks_without_consuming(
+    client, session_factory, sent
+):
+    """The code screen gets an instant yes/no; the code stays usable after."""
+    email = await _verified_user(client, session_factory, sent)
+    await client.post("/api/Auth/forgotPassword", json={"email": email})
+    code = _code_from(sent[0])
+    wrong = "000000" if code != "000000" else "111111"
+
+    resp = await client.post(
+        "/api/Auth/verifyResetCode", json={"email": email, "code": wrong}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "OTP_INVALID"
+
+    resp = await client.post(
+        "/api/Auth/verifyResetCode", json={"email": email, "code": code}
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Verifying must not log anyone in or consume the code.
+    assert "token" not in resp.json()
+    resp = await client.post(
+        "/api/Auth/resetPassword",
+        json={"email": email, "code": code, "password": NEW},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+async def test_verify_reset_code_rejects_signup_codes_and_unknown_emails(
+    client, sent
+):
+    resp = await client.post(
+        "/api/Auth/verifyResetCode",
+        json={"email": "nobody@example.com", "code": "123456"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "OTP_INVALID"
+
+    email = f"user-{uuid.uuid4().hex[:8]}@example.com"
+    await client.post(
+        "/api/Auth/SignUp",
+        json={"name": "Test User", "email": email, "password": OLD},
+    )
+    signup_code = _code_from(sent[0])
+    resp = await client.post(
+        "/api/Auth/verifyResetCode", json={"email": email, "code": signup_code}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "OTP_INVALID"

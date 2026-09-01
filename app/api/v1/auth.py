@@ -413,6 +413,18 @@ async def forgot_password(
     return generic
 
 
+@router.post("/verifyResetCode", response_model=MessageResponse)
+async def verify_reset_code(payload: VerifyCodeRequest, db: Db) -> MessageResponse:
+    """Check a reset code *without* consuming it.
+    """
+    user = await db.scalar(select(User).where(User.email == payload.email.lower()))
+    if user is None or user.deleted_at is not None:
+        raise AppError("auth.otp_invalid", code="OTP_INVALID")
+
+    await _check_otp(db, user, payload.code, OtpPurpose.reset_password)
+    return MessageResponse(message="Code verified.")
+
+
 @router.post("/resetPassword", response_model=MessageResponse)
 async def reset_password(payload: ResetPasswordRequest, db: Db) -> MessageResponse:
     _ensure_password_policy(payload.password)
