@@ -286,3 +286,50 @@ async def test_verify_reset_code_rejects_signup_codes_and_unknown_emails(
     )
     assert resp.status_code == 400
     assert resp.json()["code"] == "OTP_INVALID"
+
+
+async def test_verifying_a_reset_code_restarts_its_expiry(
+    client, session_factory, sent
+):
+    """A slow user on the new-password screen gets a full TTL from verification."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.core.timeutil import ensure_utc
+
+    email = await _verified_user(client, session_factory, sent)
+    await client.post("/api/Auth/forgotPassword", json={"email": email})
+    code = _code_from(sent[0])
+
+    # Pretend the user dawdled: 1 minute left on the code.
+    async with session_factory() as db:
+        user = await db.scalar(select(User).where(User.email == email))
+        otp = await db.scalar(
+            select(OtpCode).where(
+                OtpCode.user_id == user.id,
+                OtpCode.purpose == OtpPurpose.reset_password,
+            )
+        )
+        otp.expires_at = datetime.now(UTC) + timedelta(minutes=1)
+        await db.commit()
+        otp_id = otp.id
+
+    resp = await client.post(
+        "/api/Auth/verifyResetCode", json={"email": email, "code": code}
+    )
+    assert resp.status_code == 200, resp.text
+
+    async with session_factory() as db:
+        otp = await db.get(OtpCode, otp_id)
+        remaining = ensure_utc(otp.expires_at) - datetime.now(UTC)
+    assert remaining > timedelta(minutes=settings.OTP_TTL_MINUTES - 1)
+
+    # An already-expired code cannot be revived by verifying it.
+    async with session_factory() as db:
+        otp = await db.get(OtpCode, otp_id)
+        otp.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await db.commit()
+    resp = await client.post(
+        "/api/Auth/verifyResetCode", json={"email": email, "code": code}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "OTP_EXPIRED"
