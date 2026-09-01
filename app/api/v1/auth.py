@@ -1,5 +1,4 @@
-"""Authentication.
-"""
+"""Authentication."""
 
 from __future__ import annotations
 
@@ -158,8 +157,7 @@ async def _issue_otp(
             user_id=user.id,
             purpose=purpose,
             code_hash=hash_otp(code),
-            expires_at=datetime.now(UTC)
-            + timedelta(minutes=settings.OTP_TTL_MINUTES),
+            expires_at=datetime.now(UTC) + timedelta(minutes=settings.OTP_TTL_MINUTES),
         )
     )
     await db.flush()
@@ -263,9 +261,7 @@ async def _bootstrap_user_rows(db: Db, user: User) -> None:
 
 
 @router.post("/SignUp", response_model=SignUpResponse, status_code=201)
-async def sign_up(
-    payload: SignUpRequest, db: Db, request: Request
-) -> SignUpResponse:
+async def sign_up(payload: SignUpRequest, db: Db, request: Request) -> SignUpResponse:
     # Rate-limited per IP: every successful sign-up sends an email, and a
     # loop over throwaway addresses burns sending reputation, not just rows.
     enforce(signup_by_ip, client_ip(request))
@@ -369,7 +365,9 @@ async def verify_code(payload: VerifyCodeRequest, db: Db) -> TokenResponse:
 async def resend_code(payload: ResendCodeRequest, db: Db) -> MessageResponse:
     user = await db.scalar(select(User).where(User.email == payload.email.lower()))
     # Always the same reply — never reveal whether the address exists.
-    generic = MessageResponse(message="If that email is registered, a code is on its way.")
+    generic = MessageResponse(
+        message="If that email is registered, a code is on its way."
+    )
     if user is None:
         return generic
 
@@ -415,13 +413,16 @@ async def forgot_password(
 
 @router.post("/verifyResetCode", response_model=MessageResponse)
 async def verify_reset_code(payload: VerifyCodeRequest, db: Db) -> MessageResponse:
-    """Check a reset code *without* consuming it.
-    """
+    """Check a reset code *without* consuming it."""
     user = await db.scalar(select(User).where(User.email == payload.email.lower()))
     if user is None or user.deleted_at is not None:
         raise AppError("auth.otp_invalid", code="OTP_INVALID")
 
-    await _check_otp(db, user, payload.code, OtpPurpose.reset_password)
+    otp = await _check_otp(db, user, payload.code, OtpPurpose.reset_password)
+    # Restart the clock: the user now has a full OTP_TTL_MINUTES to type a new
+    # password.
+    otp.expires_at = datetime.now(UTC) + timedelta(minutes=settings.OTP_TTL_MINUTES)
+    await db.flush()
     return MessageResponse(message="Code verified.")
 
 
@@ -456,9 +457,7 @@ async def _social_login(
     db: Db, *, provider: AuthProvider, subject: str, email: str, name: str | None
 ) -> TokenResponse:
     user = await db.scalar(
-        select(User).where(
-            User.provider == provider, User.provider_subject == subject
-        )
+        select(User).where(User.provider == provider, User.provider_subject == subject)
     )
     is_new = False
 
