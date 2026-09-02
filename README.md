@@ -152,14 +152,36 @@ that, every re-sync double-counts. Weight entries also record provenance
 
 ## Not implemented
 
-- **Google sign-in** — verification is implemented, but `Auth/google` answers
-  `501` until `GOOGLE_CLIENT_IDS` is set. The token's `aud` is checked against
-  that list, so with no configured audience there is nothing to check it
-  against; the endpoint refuses rather than trusts. Apple is configured
-  (`APPLE_BUNDLE_IDS=com.alluvi.alluvi`) and live.
 - **Object storage** — photos go to local disk under `MEDIA_ROOT`. Implement
   `StorageBackend` for S3/GCS and serve time-limited pre-signed URLs.
 - **Deferred by product decision** — subscriptions/billing, referral rewards,
   PDF export, Family Plan. `isPremium` is returned but never set.
+
+---
+
+## Future plan — Apple Health: calories burned (activity sync)
+
+Today the Apple Health integration ingests **weight only**
+(`POST /api/profile/healthSync`). The next planned extension is **active
+energy burned**, because it directly improves the core calorie ring: if the
+user burns 400 kcal on a run, the app currently doesn't know.
+
+Scope, in order:
+
+1. **Ingest endpoint** — `POST /api/profile/activitySync`, same mailbox
+   pattern as weight: the client reads HealthKit's *active energy burned*
+   on-device and posts daily totals up; the backend never talks to Apple.
+   Idempotent on the HealthKit sample UUID, exactly like weight sync.
+2. **Storage** — a new `activity_entries` table (user, date, kcal burned,
+   source, external_id) with the same provenance/dedupe rules as
+   `weight_entries`.
+3. **Surfacing** — include burned calories in the daily summary/analytics
+   responses so the client can show "you burned N kcal today".
+4. **Product decision (open)** — display-only vs. *adjusting* the daily
+   calorie target by the burned amount (the MyFitnessPal model). Adjusting
+   touches `plan.py` and the ring math, so it ships as a separate step
+   after display-only is proven.
+
+
 
 
