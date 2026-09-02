@@ -327,11 +327,11 @@ async def update_weight(
             select(WeightEntry).where(
                 WeightEntry.user_id == user.id,
                 WeightEntry.recorded_on == today,
-                WeightEntry.source == WeightSource.manual,
             )
         )
         if existing is not None:
             existing.kg = payload.current_weight_kg
+            existing.source = WeightSource.manual
         else:
             db.add(
                 WeightEntry(
