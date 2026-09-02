@@ -57,8 +57,15 @@ async def analytics(
     if window is not None:
         query = query.where(WeightEntry.recorded_on >= today - timedelta(days=window))
     entries = (
-        await db.scalars(query.order_by(WeightEntry.recorded_on))
+        await db.scalars(
+            query.order_by(WeightEntry.recorded_on, WeightEntry.updated_at)
+        )
     ).all()
+
+    # One point per day: multiple same-day rows can exist (e.g. several
+    # Apple Health samples) — the most recently updated one wins.
+    by_day = {e.recorded_on: e for e in entries}
+    entries = list(by_day.values())
 
     series = [
         WeightPointOut(
