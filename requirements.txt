@@ -14,6 +14,7 @@ python-multipart==0.0.20
 email-validator==2.3.0
 anthropic==0.121.0
 pillow==11.3.0
+fpdf2==2.8.3
 httpx==0.28.1
 firebase-admin==7.1.0
 

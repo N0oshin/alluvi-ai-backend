@@ -863,6 +863,22 @@ Static copy — no referral reward is tracked or granted.
 
 ---
 
+### GET `/api/profile/export/pdf` → 200 · Auth: **Yes**
+
+Export PDF Summary Report (Profile → Support & legal). Returns raw **`application/pdf` bytes**, not JSON, with `Content-Disposition: attachment; filename="alluvi-ai-summary-<date>.pdf"` — download to a temp file and hand it to the OS share sheet.
+
+**Request** — none
+
+**Response** — a PDF containing:
+
+- **Header** — display name, the 7-day date range, and a generated-on timestamp (user's timezone)
+- **Goals & Progress** — starting / current / goal weight and BMI with its category
+- **Meal History** — one table per day for the **last 7 user-local days** (time, title, kcal, macros, day totals); days with nothing logged say "No meals logged"
+
+The report is **English-only** for now regardless of `langCode`, and non-Latin characters in names/titles are replaced with `?`. Works for a brand-new account too (empty tables, `-` for missing weights).
+
+---
+
 ### POST `/api/profile/feedback` → 200 · Auth: **Yes**
 
 **Request** — `FeedbackRequest`
